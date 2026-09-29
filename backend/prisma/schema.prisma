@@ -1,0 +1,587 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum CatalogStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum ProductStatus {
+  ACTIVE
+  INACTIVE
+  ARCHIVED
+}
+
+enum SerialStatus {
+  AVAILABLE
+  ASSIGNED
+  RESERVED
+  DEFECTIVE
+  FOR_REPAIR
+  RETURNED
+  DISPOSED
+}
+
+enum MovementType {
+  STOCK_IN
+  STOCK_OUT
+  ADJUSTMENT
+  TRANSFER_OUT
+  TRANSFER_IN
+  PURCHASE_RECEIVING
+  RETURN
+  DAMAGE
+  CORRECTION
+  OPENING_STOCK
+  ASSET_ASSIGNMENT
+  ASSET_RETURN
+}
+
+enum AdjustmentType {
+  STOCK_IN
+  STOCK_OUT
+  CORRECTION
+  DAMAGE
+  RETURN
+  OPENING_STOCK
+}
+
+enum TransferStatus {
+  DRAFT
+  PENDING
+  APPROVED
+  IN_TRANSIT
+  RECEIVED
+  CANCELLED
+}
+
+enum PurchaseOrderStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  ORDERED
+  PARTIAL
+  RECEIVED
+  CANCELLED
+}
+
+enum AssetStatus {
+  AVAILABLE
+  ASSIGNED
+  MAINTENANCE
+  RETIRED
+  LOST
+  DISPOSED
+}
+
+enum AssignmentStatus {
+  ACTIVE
+  RETURNED
+}
+
+enum MaintenanceStatus {
+  SCHEDULED
+  IN_REPAIR
+  COMPLETED
+  CANCELLED
+}
+
+model User {
+  id String @id @default(cuid())
+  firstName String
+  lastName String
+  email String @unique
+  passwordHash String
+  roleId String
+  warehouseId String?
+  avatar String?
+  phone String?
+  status UserStatus @default(ACTIVE)
+  lastLoginAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  role Role @relation(fields: [roleId], references: [id])
+  warehouse Warehouse? @relation("WarehouseUsers", fields: [warehouseId], references: [id])
+  managedWarehouses Warehouse[] @relation("WarehouseManager")
+  refreshTokens RefreshToken[]
+  requestedTransfers StockTransfer[] @relation("TransferRequester")
+  approvedTransfers StockTransfer[] @relation("TransferApprover")
+  receivedTransfers StockTransfer[] @relation("TransferReceiver")
+  createdOrders PurchaseOrder[] @relation("OrderCreator")
+  approvedOrders PurchaseOrder[] @relation("OrderApprover")
+  adjustments StockAdjustment[]
+  movements StockMovement[]
+  receipts PurchaseReceipt[]
+  assetAssignments AssetAssignment[]
+  maintenanceRecords MaintenanceRecord[]
+  notifications Notification[]
+  activityLogs ActivityLog[]
+  updatedSettings SystemSetting[]
+  @@index([roleId])
+  @@index([warehouseId])
+}
+
+model RefreshToken {
+  id String @id @default(cuid())
+  userId String
+  tokenHash String @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime @default(now())
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId, expiresAt])
+}
+
+model Role {
+  id String @id @default(cuid())
+  name String @unique
+  description String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  users User[]
+  permissions RolePermission[]
+}
+
+model Permission {
+  id String @id @default(cuid())
+  module String
+  action String
+  description String?
+  roles RolePermission[]
+  @@unique([module, action])
+}
+
+model RolePermission {
+  roleId String
+  permissionId String
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  @@id([roleId, permissionId])
+  @@index([permissionId])
+}
+
+model Category {
+  id String @id @default(cuid())
+  name String @unique
+  slug String @unique
+  description String?
+  parentId String?
+  status CatalogStatus @default(ACTIVE)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  parent Category? @relation("CategoryTree", fields: [parentId], references: [id])
+  children Category[] @relation("CategoryTree")
+  products Product[]
+  @@index([parentId])
+}
+
+model Brand {
+  id String @id @default(cuid())
+  name String @unique
+  slug String @unique
+  logo String?
+  description String?
+  status CatalogStatus @default(ACTIVE)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  products Product[]
+}
+
+model Supplier {
+  id String @id @default(cuid())
+  companyName String @unique
+  supplierCode String @unique
+  contactPerson String?
+  email String?
+  phone String?
+  address String?
+  taxId String?
+  paymentTerms String?
+  notes String? @db.Text
+  status CatalogStatus @default(ACTIVE)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  products Product[]
+  serialNumbers SerialNumber[]
+  purchaseOrders PurchaseOrder[]
+}
+
+model Warehouse {
+  id String @id @default(cuid())
+  name String @unique
+  code String @unique
+  address String?
+  managerId String?
+  phone String?
+  email String?
+  status CatalogStatus @default(ACTIVE)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  manager User? @relation("WarehouseManager", fields: [managerId], references: [id])
+  users User[] @relation("WarehouseUsers")
+  stock WarehouseStock[]
+  serialNumbers SerialNumber[]
+  movements StockMovement[] @relation("MovementWarehouse")
+  sourceMovements StockMovement[] @relation("MovementSource")
+  destinationMovements StockMovement[] @relation("MovementDestination")
+  adjustments StockAdjustment[]
+  outgoingTransfers StockTransfer[] @relation("TransferSource")
+  incomingTransfers StockTransfer[] @relation("TransferDestination")
+  purchaseOrders PurchaseOrder[]
+  receipts PurchaseReceipt[]
+  assets Asset[]
+  @@index([managerId])
+}
+
+model Product {
+  id String @id @default(cuid())
+  name String
+  sku String @unique
+  barcode String? @unique
+  categoryId String
+  brandId String
+  defaultSupplierId String?
+  model String?
+  description String? @db.Text
+  unit String @default("pcs")
+  minimumStock Int @default(0)
+  maximumStock Int @default(0)
+  reorderPoint Int @default(0)
+  purchaseCost Decimal @default(0) @db.Decimal(14, 2)
+  warrantyMonths Int @default(0)
+  trackSerialNumbers Boolean @default(false)
+  image String?
+  status ProductStatus @default(ACTIVE)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  category Category @relation(fields: [categoryId], references: [id])
+  brand Brand @relation(fields: [brandId], references: [id])
+  defaultSupplier Supplier? @relation(fields: [defaultSupplierId], references: [id])
+  stocks WarehouseStock[]
+  serialNumbers SerialNumber[]
+  movements StockMovement[]
+  adjustments StockAdjustment[]
+  transferItems StockTransferItem[]
+  purchaseOrderItems PurchaseOrderItem[]
+  receiptItems PurchaseReceiptItem[]
+  assets Asset[]
+  @@index([categoryId])
+  @@index([brandId])
+  @@index([defaultSupplierId])
+  @@index([status, name])
+}
+
+model WarehouseStock {
+  id String @id @default(cuid())
+  productId String
+  warehouseId String
+  quantity Int @default(0)
+  reservedQuantity Int @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  product Product @relation(fields: [productId], references: [id])
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id])
+  @@unique([productId, warehouseId])
+  @@index([warehouseId])
+}
+
+model SerialNumber {
+  id String @id @default(cuid())
+  serialNumber String @unique
+  productId String
+  warehouseId String?
+  purchaseOrderItemId String?
+  supplierId String?
+  warrantyStart DateTime?
+  warrantyEnd DateTime?
+  status SerialStatus @default(AVAILABLE)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  product Product @relation(fields: [productId], references: [id])
+  warehouse Warehouse? @relation(fields: [warehouseId], references: [id])
+  purchaseOrderItem PurchaseOrderItem? @relation(fields: [purchaseOrderItemId], references: [id])
+  supplier Supplier? @relation(fields: [supplierId], references: [id])
+  asset Asset?
+  maintenanceRecords MaintenanceRecord[]
+  transferSelections StockTransferSerial[]
+  @@index([productId, status])
+  @@index([warehouseId])
+  @@index([warrantyEnd])
+}
+
+model StockMovement {
+  id String @id @default(cuid())
+  referenceNumber String
+  productId String
+  warehouseId String
+  type MovementType
+  quantity Int
+  previousQuantity Int
+  newQuantity Int
+  sourceWarehouseId String?
+  destinationWarehouseId String?
+  userId String?
+  notes String? @db.Text
+  createdAt DateTime @default(now())
+  product Product @relation(fields: [productId], references: [id])
+  warehouse Warehouse @relation("MovementWarehouse", fields: [warehouseId], references: [id])
+  sourceWarehouse Warehouse? @relation("MovementSource", fields: [sourceWarehouseId], references: [id])
+  destinationWarehouse Warehouse? @relation("MovementDestination", fields: [destinationWarehouseId], references: [id])
+  user User? @relation(fields: [userId], references: [id])
+  @@index([productId, createdAt])
+  @@index([warehouseId, createdAt])
+  @@index([type, createdAt])
+  @@index([referenceNumber])
+}
+
+model StockAdjustment {
+  id String @id @default(cuid())
+  referenceNumber String @unique
+  productId String
+  warehouseId String
+  type AdjustmentType
+  quantity Int
+  reason String
+  notes String? @db.Text
+  userId String
+  createdAt DateTime @default(now())
+  product Product @relation(fields: [productId], references: [id])
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id])
+  user User @relation(fields: [userId], references: [id])
+  @@index([productId, createdAt])
+}
+
+model StockTransfer {
+  id String @id @default(cuid())
+  transferNumber String @unique
+  sourceWarehouseId String
+  destinationWarehouseId String
+  requestedById String
+  approvedById String?
+  receivedById String?
+  status TransferStatus @default(DRAFT)
+  notes String? @db.Text
+  requestedAt DateTime @default(now())
+  approvedAt DateTime?
+  shippedAt DateTime?
+  receivedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  sourceWarehouse Warehouse @relation("TransferSource", fields: [sourceWarehouseId], references: [id])
+  destinationWarehouse Warehouse @relation("TransferDestination", fields: [destinationWarehouseId], references: [id])
+  requestedBy User @relation("TransferRequester", fields: [requestedById], references: [id])
+  approvedBy User? @relation("TransferApprover", fields: [approvedById], references: [id])
+  receivedBy User? @relation("TransferReceiver", fields: [receivedById], references: [id])
+  items StockTransferItem[]
+  @@index([status, createdAt])
+}
+
+model StockTransferItem {
+  id String @id @default(cuid())
+  transferId String
+  productId String
+  quantity Int
+  receivedQuantity Int @default(0)
+  transfer StockTransfer @relation(fields: [transferId], references: [id])
+  product Product @relation(fields: [productId], references: [id])
+  serialSelections StockTransferSerial[]
+  @@index([productId])
+}
+
+model StockTransferSerial {
+  transferItemId String
+  serialNumberId String
+  transferItem StockTransferItem @relation(fields: [transferItemId], references: [id])
+  serialNumber SerialNumber @relation(fields: [serialNumberId], references: [id])
+  @@id([transferItemId, serialNumberId])
+  @@index([serialNumberId])
+}
+
+model PurchaseOrder {
+  id String @id @default(cuid())
+  poNumber String @unique
+  supplierId String
+  warehouseId String
+  createdById String
+  approvedById String?
+  orderDate DateTime @default(now())
+  expectedDelivery DateTime?
+  reference String?
+  notes String? @db.Text
+  subtotal Decimal @db.Decimal(14, 2)
+  tax Decimal @default(0) @db.Decimal(14, 2)
+  shipping Decimal @default(0) @db.Decimal(14, 2)
+  total Decimal @db.Decimal(14, 2)
+  status PurchaseOrderStatus @default(DRAFT)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  supplier Supplier @relation(fields: [supplierId], references: [id])
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id])
+  createdBy User @relation("OrderCreator", fields: [createdById], references: [id])
+  approvedBy User? @relation("OrderApprover", fields: [approvedById], references: [id])
+  items PurchaseOrderItem[]
+  receipts PurchaseReceipt[]
+  @@index([supplierId, status])
+  @@index([warehouseId, orderDate])
+}
+
+model PurchaseOrderItem {
+  id String @id @default(cuid())
+  purchaseOrderId String
+  productId String
+  quantity Int
+  unitCost Decimal @db.Decimal(14, 2)
+  receivedQuantity Int @default(0)
+  subtotal Decimal @db.Decimal(14, 2)
+  purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id])
+  product Product @relation(fields: [productId], references: [id])
+  receiptItems PurchaseReceiptItem[]
+  serialNumbers SerialNumber[]
+  @@index([productId])
+}
+
+model PurchaseReceipt {
+  id String @id @default(cuid())
+  receiptNumber String @unique
+  purchaseOrderId String
+  warehouseId String
+  receivedById String
+  receivedAt DateTime @default(now())
+  notes String? @db.Text
+  createdAt DateTime @default(now())
+  purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id])
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id])
+  receivedBy User @relation(fields: [receivedById], references: [id])
+  items PurchaseReceiptItem[]
+  @@index([purchaseOrderId, receivedAt])
+}
+
+model PurchaseReceiptItem {
+  id String @id @default(cuid())
+  receiptId String
+  purchaseOrderItemId String
+  productId String
+  quantity Int
+  receipt PurchaseReceipt @relation(fields: [receiptId], references: [id])
+  purchaseOrderItem PurchaseOrderItem @relation(fields: [purchaseOrderItemId], references: [id])
+  product Product @relation(fields: [productId], references: [id])
+  @@index([purchaseOrderItemId])
+}
+
+model Asset {
+  id String @id @default(cuid())
+  assetTag String @unique
+  productId String
+  serialNumberId String? @unique
+  warehouseId String?
+  purchaseDate DateTime?
+  status AssetStatus @default(AVAILABLE)
+  notes String? @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  product Product @relation(fields: [productId], references: [id])
+  serialNumber SerialNumber? @relation(fields: [serialNumberId], references: [id])
+  warehouse Warehouse? @relation(fields: [warehouseId], references: [id])
+  assignments AssetAssignment[]
+  maintenanceRecords MaintenanceRecord[]
+  @@index([status, warehouseId])
+}
+
+model AssetAssignment {
+  id String @id @default(cuid())
+  assetId String
+  assignedTo String
+  department String?
+  location String?
+  assignedById String?
+  assignedDate DateTime @default(now())
+  returnedDate DateTime?
+  conditionOnAssign String?
+  conditionOnReturn String?
+  notes String? @db.Text
+  status AssignmentStatus @default(ACTIVE)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  asset Asset @relation(fields: [assetId], references: [id])
+  assignedBy User? @relation(fields: [assignedById], references: [id])
+  @@index([assetId, status])
+}
+
+model MaintenanceRecord {
+  id String @id @default(cuid())
+  assetId String
+  serialNumberId String?
+  issue String
+  description String? @db.Text
+  technician String?
+  serviceDate DateTime?
+  completedDate DateTime?
+  cost Decimal @default(0) @db.Decimal(14, 2)
+  status MaintenanceStatus @default(SCHEDULED)
+  notes String? @db.Text
+  createdById String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  asset Asset @relation(fields: [assetId], references: [id])
+  serialNumber SerialNumber? @relation(fields: [serialNumberId], references: [id])
+  createdBy User? @relation(fields: [createdById], references: [id])
+  @@index([assetId, status])
+}
+
+model Notification {
+  id String @id @default(cuid())
+  dedupeKey String? @unique
+  userId String
+  type String
+  title String
+  message String @db.Text
+  referenceType String?
+  referenceId String?
+  isRead Boolean @default(false)
+  createdAt DateTime @default(now())
+  user User @relation(fields: [userId], references: [id])
+  @@index([userId, isRead, createdAt])
+}
+
+model ActivityLog {
+  id String @id @default(cuid())
+  userId String?
+  action String
+  module String
+  entityType String?
+  entityId String?
+  description String @db.Text
+  ipAddress String?
+  userAgent String? @db.Text
+  createdAt DateTime @default(now())
+  user User? @relation(fields: [userId], references: [id])
+  @@index([module, action, createdAt])
+  @@index([userId, createdAt])
+}
+
+model SystemSetting {
+  id String @id @default(cuid())
+  key String @unique
+  value String @db.Text
+  group String @default("general")
+  updatedById String?
+  updatedAt DateTime @updatedAt
+  updatedBy User? @relation(fields: [updatedById], references: [id])
+}
+
+model Counter {
+  key String @id
+  value Int @default(0)
+}

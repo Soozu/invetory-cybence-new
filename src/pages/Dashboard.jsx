@@ -1,0 +1,53 @@
+import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { Area, AreaChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { Activity, ArrowDownLeft, ArrowRight, ArrowUpRight, Boxes, CalendarDays, CircleAlert, ClipboardCheck, DollarSign, Package, PackageMinus, PackagePlus, Truck } from 'lucide-react'
+import { useInventory } from '../context/InventoryContext.jsx'
+import { getDashboardMovements, getCategoryDistribution } from '../services/dashboardService.js'
+import { number, peso, productStatus } from '../lib/format.js'
+import { inventorySummary } from '../lib/inventory.js'
+import { Badge, Button, Card, PageHeader, ProductCell, SectionHeading, StatCard } from '../components/ui.jsx'
+
+const activityIcons={ 'Stock In':PackagePlus,Transfer:ArrowRight,Adjustment:Activity,'Stock Out':ArrowDownLeft }
+const tooltipStyle={background:'var(--surface)',border:'1px solid var(--border)',borderRadius:12,color:'var(--text)',boxShadow:'0 12px 30px rgba(18,35,61,.12)',fontSize:12}
+
+export default function Dashboard() {
+  const navigate=useNavigate(),{products,suppliers,movements,dashboardSummary,notify}=useInventory()
+  const [period,setPeriod]=useState('30 Days')
+  const [chartData,setChartData]=useState([])
+  const [categoryShare,setCategoryShare]=useState([])
+  useEffect(()=>{
+    const periods={'7 Days':'7d','30 Days':'30d','3 Months':'3m','6 Months':'6m','1 Year':'1y'}
+    getDashboardMovements(periods[period]).then(result=>setChartData(result.data.map(point=>({day:point.date,in:point.stockIn,out:point.stockOut})))).catch(error=>notify(error.message,'error'))
+  },[period,movements.length,notify])
+  useEffect(()=>{
+    getCategoryDistribution().then(result=>{
+      const total=result.data.reduce((sum,item)=>sum+item.quantity,0)
+      const colors=['#3768e9','#6a86df','#88a9f4','#9b8ae8','#4ab9ae','#f5a66a','#f16f84','#8b98ae']
+      setCategoryShare(result.data.map((item,index)=>({name:item.name,value:total?Math.round(item.quantity/total*100):0,color:colors[index%colors.length]})))
+    }).catch(error=>notify(error.message,'error'))
+  },[products.length,movements.length,notify])
+  const low=products.filter(p=>!p.inactive&&p.stock-p.reserved>0&&p.stock-p.reserved<=(p.reorder||p.min))
+  const summary=dashboardSummary?{products:dashboardSummary.totalProducts,units:dashboardSummary.totalInventoryUnits,value:dashboardSummary.inventoryValue,low:dashboardSummary.lowStock,out:dashboardSummary.outOfStock,suppliers:dashboardSummary.activeSuppliers}:inventorySummary(products,suppliers)
+  const stats=[
+    {label:'Total Products',value:number(summary.products),icon:Package,tone:'blue',hint:'Active catalog records'},
+    {label:'Inventory Units',value:number(summary.units),icon:Boxes,tone:'violet',hint:'Across all locations'},
+    {label:'Inventory Value',value:peso(summary.value),valueClassName:'!text-[21px] 2xl:!text-[21px]',icon:DollarSign,tone:'green',hint:'At purchase cost'},
+    {label:'Low Stock',value:number(summary.low),icon:CircleAlert,tone:'amber',hint:'Needs attention'},
+    {label:'Out of Stock',value:number(summary.out),icon:PackageMinus,tone:'rose',hint:'Awaiting replenishment'},
+    {label:'Active Suppliers',value:number(summary.suppliers),icon:Truck,tone:'blue',hint:'Approved partners'}
+  ]
+  const recent=[...movements].slice(0,5).map(m=>({icon:activityIcons[m.movement]||Activity,text:`${m.quantity>0?'+':''}${m.quantity} × ${products.find(p=>p.id===m.productId)?.name||'Product'} ${m.movement.toLowerCase()}`,person:m.by,time:m.date}))
+  return <>
+    <PageHeader eyebrow="Overview" title="Inventory Dashboard" subtitle="Monitor products, stock levels, suppliers, assets, and inventory activity." actions={<div className="relative"><CalendarDays size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 subtle"/><select aria-label="Dashboard date range" className="field w-[160px] pl-9 text-xs font-semibold" value={period} onChange={event=>setPeriod(event.target.value)}>{['7 Days','30 Days','3 Months','6 Months','1 Year'].map(value=><option key={value}>{value}</option>)}</select></div>}/>
+    <div className="grid grid-cols-2 gap-3 md:grid-cols-3 2xl:grid-cols-6 2xl:gap-4">{stats.map(s=><StatCard key={s.label} {...s}/>)}</div>
+    <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1.75fr)_minmax(320px,1fr)]">
+      <Card className="min-w-0 p-5 sm:p-6"><div className="flex flex-wrap items-start justify-between gap-3"><SectionHeading title="Inventory movement" subtitle="Stock flowing in and out across all warehouses"/><select aria-label="Inventory chart period" className="field w-[125px] !py-2 text-xs font-semibold" value={period} onChange={e=>setPeriod(e.target.value)}>{['7 Days','30 Days','3 Months','6 Months','1 Year'].map(k=><option key={k}>{k}</option>)}</select></div><div className="mt-5 flex items-center gap-5 text-[11px] font-semibold subtle"><span className="flex items-center gap-2"><i className="h-2.5 w-2.5 rounded-full bg-brand-600"/>Stock In</span><span className="flex items-center gap-2"><i className="h-2.5 w-2.5 rounded-full bg-[#91aef3]"/>Stock Out</span></div><div className="mt-4 h-[268px] w-full"><ResponsiveContainer width="100%" height="100%"><AreaChart data={chartData} margin={{top:8,right:4,left:-24,bottom:0}}><defs><linearGradient id="stockInFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#3768e9" stopOpacity={.24}/><stop offset="100%" stopColor="#3768e9" stopOpacity={0}/></linearGradient><linearGradient id="stockOutFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#91aef3" stopOpacity={.14}/><stop offset="100%" stopColor="#91aef3" stopOpacity={0}/></linearGradient></defs><CartesianGrid stroke="var(--border)" strokeDasharray="3 5" vertical={false}/><XAxis dataKey="day" tickLine={false} axisLine={false} tick={{fill:'var(--muted)',fontSize:11}} dy={10}/><YAxis tickLine={false} axisLine={false} tick={{fill:'var(--muted)',fontSize:11}}/><Tooltip contentStyle={tooltipStyle}/><Area type="monotone" dataKey="in" name="Stock In" stroke="#3768e9" strokeWidth={2.5} fill="url(#stockInFill)" activeDot={{r:5}} animationDuration={650}/><Area type="monotone" dataKey="out" name="Stock Out" stroke="#91aef3" strokeWidth={2.2} fill="url(#stockOutFill)" activeDot={{r:5}} animationDuration={650}/></AreaChart></ResponsiveContainer></div></Card>
+      <Card className="p-5 sm:p-6"><SectionHeading title="Stock by category" subtitle="Distribution across product groups"/><div className="relative mx-auto mt-1 h-[195px] max-w-[240px]"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={categoryShare} dataKey="value" innerRadius={61} outerRadius={84} paddingAngle={3} stroke="none" animationDuration={650}>{categoryShare.map(d=><Cell key={d.name} fill={d.color}/>)}</Pie><Tooltip contentStyle={tooltipStyle} formatter={v=>`${v}%`}/></PieChart></ResponsiveContainer><div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center"><span className="font-display text-[23px] font-extrabold">{number(summary.products)}</span><span className="text-[11px] subtle">products</span></div></div><div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-2.5">{categoryShare.map(c=><div key={c.name} className="flex items-center justify-between gap-2 text-[11px]"><span className="flex min-w-0 items-center gap-2 truncate subtle"><i className="h-2 w-2 shrink-0 rounded-full" style={{background:c.color}}/>{c.name}</span><span className="font-bold">{c.value}%</span></div>)}</div></Card>
+    </div>
+    <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1.75fr)_minmax(320px,1fr)]">
+      <Card className="min-w-0 overflow-hidden"><div className="flex items-center justify-between gap-3 p-5 pb-4 sm:px-6"><SectionHeading title="Low stock products" subtitle="Replenish these items before they run out"/><button onClick={()=>navigate('/monitoring/low-stock')} className="flex items-center gap-1 whitespace-nowrap text-xs font-bold text-brand-600 hover:text-brand-700">View all <ArrowRight size={13}/></button></div><div className="overflow-x-auto"><table className="w-full min-w-[680px] text-left text-xs"><thead className="table-head"><tr>{['Product','SKU','Category','Stock','Minimum','Warehouse','Status'].map(h=><th key={h} className="px-4 py-3 text-[10px] font-bold uppercase tracking-[.08em] first:pl-6">{h}</th>)}</tr></thead><tbody>{low.slice(0,5).map(p=><tr key={p.id} onClick={()=>navigate(`/products/${p.id}`)} className="table-row cursor-pointer border-t"><td className="pl-6 pr-4 py-3"><ProductCell product={p}/></td><td className="px-4 py-3 font-medium subtle">{p.sku}</td><td className="px-4 py-3">{p.category}</td><td className="px-4 py-3 font-bold text-amber-600">{p.stock}</td><td className="px-4 py-3">{p.min}</td><td className="px-4 py-3">{p.warehouse}</td><td className="px-4 py-3"><Badge>{productStatus(p)}</Badge></td></tr>)}</tbody></table></div></Card>
+      <Card className="p-5 sm:p-6"><SectionHeading title="Recent stock activity" subtitle="Latest changes across your inventory" action={<Activity size={16} className="subtle"/>}/><div className="mt-5 space-y-0">{recent.map((a,i)=><div key={i} className="relative flex gap-3 pb-5 last:pb-0">{i<recent.length-1&&<span className="absolute left-[16px] top-9 h-[calc(100%-24px)] w-px bg-[var(--border)]"/>}<span className={`z-10 flex h-[33px] w-[33px] shrink-0 items-center justify-center rounded-full ${i===0?'bg-brand-50 text-brand-600 dark:bg-brand-500/10':'bg-[var(--surface-muted)] text-[var(--muted)]'}`}><a.icon size={15}/></span><div className="min-w-0 pt-0.5"><div className="text-xs font-semibold leading-relaxed">{a.text}</div><div className="mt-1 text-[11px] subtle">{a.person} <span className="mx-1">·</span> {a.time}</div></div></div>)}</div><button onClick={()=>navigate('/monitoring/stock-movement')} className="mt-3 flex items-center gap-1 text-xs font-bold text-brand-600">View activity <ArrowRight size={13}/></button></Card>
+    </div>
+  </>
+}

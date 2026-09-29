@@ -1,0 +1,272 @@
+import { createContext, useCallback, useContext, useEffect, useState } from 'react'
+import { apiRequest, assetUrl } from '../lib/api.js'
+import * as auth from '../services/authService.js'
+import * as productsApi from '../services/productService.js'
+import * as inventoryApi from '../services/inventoryService.js'
+import * as ordersApi from '../services/purchaseOrderService.js'
+import * as assetsApi from '../services/assetService.js'
+
+const InventoryContext = createContext(null)
+const empty = {
+  products: [], stockLocations: {}, categories: [], brands: [], warehouses: [], suppliers: [],
+  orders: [], transfers: [], movements: [], serials: [], assets: [], maintenance: [],
+  users: [], roles: [], permissionCatalog: [], logs: [], notifications: [], permissions: {},
+  settings: {}, dashboardSummary: null
+}
+const enumValue = value => value?.toUpperCase().replaceAll(' ', '_')
+const requiredId = (rows, name, label) => {
+  const id = rows.find(row => row.name === name)?.id
+  if (!id) throw new Error(`Choose a valid ${label}.`)
+  return id
+}
+const messageOf = error => error?.errors?.[0]?.message || error?.message || 'The request could not be completed.'
+
+export function InventoryProvider({ children }) {
+  const [data, setData] = useState(empty)
+  const [user, setUser] = useState(null)
+  const [authState, setAuthState] = useState('loading')
+  const [authError, setAuthError] = useState('')
+  const [toast, setToast] = useState(null)
+  const notify = useCallback((message, kind = 'success') => setToast({ id: Date.now(), message, kind }), [])
+  const refreshData = useCallback(async () => {
+    const response = await apiRequest('/bootstrap')
+    setData({
+      ...empty, ...response.data,
+      products: response.data.products.map(product => ({ ...product, image: assetUrl(product.image) }))
+    })
+    return response.data
+  }, [])
+
+  const restore = useCallback(async () => {
+    setAuthState('loading')
+    setAuthError('')
+    try {
+      const session = await auth.restoreSession()
+      setUser(session.user)
+      await refreshData()
+      setAuthState('authenticated')
+    } catch (error) {
+      if (error.status === 401) {
+        setUser(null)
+        setData(empty)
+        setAuthState('unauthenticated')
+      } else {
+        setAuthError(messageOf(error))
+        setAuthState('error')
+      }
+    }
+  }, [refreshData])
+  useEffect(() => { restore() }, [restore])
+  useEffect(() => {
+    const expired = () => { setUser(null); setData(empty); setAuthState('unauthenticated') }
+    window.addEventListener('techstock:session-expired', expired)
+    return () => window.removeEventListener('techstock:session-expired', expired)
+  }, [])
+
+  const login = async (email, password, remember) => {
+    const loggedIn = await auth.login(email, password, remember)
+    setUser(loggedIn)
+    await refreshData()
+    setAuthError('')
+    setAuthState('authenticated')
+    return loggedIn
+  }
+  const logout = async () => {
+    try { await auth.logout() }
+    catch { /* Clear the client session even if the API is temporarily unavailable. */ }
+    finally { setUser(null); setData(empty); setAuthError(''); setAuthState('unauthenticated') }
+  }
+  const run = async (operation, success) => {
+    try {
+      const result = await operation()
+      await refreshData()
+      if (success) notify(success)
+      return result
+    } catch (error) {
+      notify(messageOf(error), 'error')
+      return null
+    }
+  }
+  const productPayload = async product => ({
+    name: product.name.trim(), sku: product.sku.trim(), barcode: product.barcode || null,
+    categoryId: requiredId(data.categories, product.category, 'category'),
+    brandId: requiredId(data.brands, product.brand, 'brand'),
+    defaultSupplierId: product.supplier ? requiredId(data.suppliers, product.supplier, 'supplier') : null,
+    model: product.model || null, description: product.description || null, unit: product.unit || 'pcs',
+    minimumStock: Number(product.min) || 0, maximumStock: Number(product.max) || 0,
+    reorderPoint: Number(product.reorder) || 0, purchaseCost: Number(product.cost) || 0,
+    warrantyMonths: Number.parseInt(product.warranty, 10) || 0,
+    trackSerialNumbers: Boolean(product.serialTracking),
+    image: await productsApi.uploadProductImage(product.image),
+    status: product.inactive ? 'INACTIVE' : 'ACTIVE'
+  })
+  const saveProduct = product => run(async () => {
+    const payload = await productPayload(product)
+    const response = product.id ? await productsApi.updateProduct(product.id, payload) : await productsApi.createProduct(payload)
+    return response.data.id
+  }, product.id ? 'Product updated.' : 'Product created.')
+  const importProducts = async records => {
+    let imported = 0
+    for (const record of records) {
+      let id
+      try {
+        const response = await productsApi.createProduct(await productPayload({
+          ...record, min: record.min || 0, max: record.max || 0,
+          reorder: record.reorder || 0, cost: record.cost || 0
+        }))
+        id = response.data.id
+        if (Number(record.stock) > 0) await inventoryApi.adjustStock({
+          productId: id,
+          warehouseId: requiredId(data.warehouses, record.warehouse || data.settings.defaultWarehouse, 'warehouse'),
+          type: 'OPENING_STOCK', quantity: Number(record.stock), reason: 'CSV import'
+        })
+        imported++
+      } catch (error) {
+        if (id) await productsApi.deleteProduct(id).catch(() => {})
+        notify(`${record.sku}: ${messageOf(error)}`, 'error')
+      }
+    }
+    await refreshData()
+    notify(`${imported} of ${records.length} products imported.`, imported === records.length ? 'success' : 'error')
+    return imported
+  }
+  const archiveProduct = id => run(() => productsApi.updateProduct(id, {
+    status: data.products.find(product => product.id === id)?.inactive ? 'ACTIVE' : 'INACTIVE'
+  }), 'Product status updated.')
+  const adjustStock = form => run(() => inventoryApi.adjustStock({
+    productId: form.productId,
+    warehouseId: requiredId(data.warehouses, form.warehouse, 'warehouse'),
+    type: enumValue(form.type), quantity: Number(form.quantity), reason: form.reason,
+    referenceNumber: form.reference || undefined, notes: form.notes || undefined,
+    serialNumbers: form.serialNumbers?.split(/[\n,]+/).map(value => value.trim()).filter(Boolean)
+  }), 'Stock updated.')
+  const createTransfer = form => run(async () => {
+    const response = await inventoryApi.createTransfer({
+      sourceWarehouseId: requiredId(data.warehouses, form.from, 'source warehouse'),
+      destinationWarehouseId: requiredId(data.warehouses, form.to, 'destination warehouse'),
+      notes: form.notes || null,
+      items: [{ productId: form.productId, quantity: Number(form.quantity) }]
+    })
+    await inventoryApi.transferAction(response.data.id, 'submit')
+    return response.data.id
+  }, 'Transfer request created.')
+  const transferAction = (id, action) => run(() => inventoryApi.transferAction(id, action), ({ submit: 'Transfer submitted.', approve: 'Transfer approved.', ship: 'Transfer shipped.', receive: 'Transfer received.', cancel: 'Transfer cancelled.' })[action])
+  const addSupplier = supplier => run(() => apiRequest('/suppliers', { method: 'POST', body: {
+    companyName: supplier.name, contactPerson: supplier.contact || null, email: supplier.email || null,
+    phone: supplier.phone || null, address: supplier.address || null, taxId: supplier.taxId || null,
+    paymentTerms: supplier.terms || null, notes: supplier.notes || null
+  } }), 'Supplier added.')
+  const addCategory = category => run(() => apiRequest('/categories', { method: 'POST', body: {
+    name: category.name, description: category.description || null,
+    parentId: category.parent ? requiredId(data.categories, category.parent, 'parent category') : null
+  } }), 'Category added.')
+  const addBrand = brand => run(() => apiRequest('/brands', { method: 'POST', body: {
+    name: brand.name, description: brand.description || null, logo: brand.logo || null
+  } }), 'Brand added.')
+  const toggleCategory = name => {
+    const record = data.categories.find(item => item.name === name)
+    return run(() => apiRequest(`/categories/${record.id}`, { method: 'PUT', body: { status: record.status === 'Active' ? 'INACTIVE' : 'ACTIVE' } }), 'Category status updated.')
+  }
+  const toggleBrand = name => {
+    const record = data.brands.find(item => item.name === name)
+    return run(() => apiRequest(`/brands/${record.id}`, { method: 'PUT', body: { status: record.status === 'Active' ? 'INACTIVE' : 'ACTIVE' } }), 'Brand status updated.')
+  }
+  const addWarehouse = warehouse => run(() => apiRequest('/warehouses', { method: 'POST', body: {
+    name: warehouse.name, address: warehouse.location || null,
+    managerId: data.users.find(user => user.name === warehouse.manager)?.id || null
+  } }), 'Warehouse added.')
+  const createOrder = (form, status = 'Draft') => run(async () => {
+    const response = await ordersApi.createPurchaseOrder({
+      supplierId: requiredId(data.suppliers, form.supplier, 'supplier'),
+      warehouseId: requiredId(data.warehouses, form.warehouse, 'warehouse'),
+      expectedDelivery: form.expected || null, reference: form.reference || null, notes: form.notes || null,
+      tax: Number(form.tax) || 0, shipping: Number(form.shipping) || 0,
+      items: form.lines.map(line => ({ productId: line.productId, quantity: Number(line.quantity), unitCost: Number(line.cost) }))
+    })
+    if (status !== 'Draft') await ordersApi.purchaseOrderAction(response.data.id, 'submit')
+    return response.data.id
+  }, status === 'Draft' ? 'Purchase order saved as draft.' : 'Purchase order submitted.')
+  const orderAction = (id, action) => run(() => ordersApi.purchaseOrderAction(id, action), ({ submit: 'Purchase order submitted.', approve: 'Purchase order approved.', cancel: 'Purchase order cancelled.' })[action])
+  const receiveOrder = (orderId, quantities, serialInputs = {}) => run(() => {
+    const order = data.orders.find(item => item.id === orderId)
+    const items = order.lines.filter(line => Number(quantities[line.productId]) > 0).map(line => ({
+      purchaseOrderItemId: line.id, quantity: Number(quantities[line.productId]),
+      serialNumbers: (serialInputs[line.productId] || '').split(/[\n,]+/).map(value => value.trim()).filter(Boolean)
+    }))
+    return ordersApi.receivePurchaseOrder(orderId, { items })
+  }, 'Purchase order received.')
+  const addAsset = asset => run(async () => {
+    const serial = data.serials.find(item => item.serial === asset.serial && item.productId === asset.productId && item.status === 'Available')
+    const product = data.products.find(item => item.id === asset.productId)
+    if (product?.serialTracking && !serial) throw new Error('Choose an available serial number for this product.')
+    const warehouse = data.warehouses.find(item => item.name === asset.location) || data.warehouses.find(item => item.name === product?.warehouse) || data.warehouses[0]
+    if (!warehouse) throw new Error('Create a warehouse first.')
+    const response = await assetsApi.createAsset({
+      productId: asset.productId, warehouseId: warehouse.id, serialNumberId: serial?.id || null,
+      purchaseDate: asset.purchaseDate || null
+    })
+    if (asset.assignedTo) await assetsApi.assetAction(response.data.id, 'assign', {
+      assignedTo: asset.assignedTo, department: asset.department || null, location: asset.location || null
+    })
+    return response
+  }, 'Asset added.')
+  const assignAsset = (id, person, department) => run(() => assetsApi.assetAction(id, 'assign', { assignedTo: person, department }), 'Asset assigned.')
+  const returnAsset = id => run(() => assetsApi.assetAction(id, 'return', {}), 'Asset returned.')
+  const addMaintenance = record => run(() => {
+    const asset = data.assets.find(item => item.tag === record.asset)
+    if (!asset) throw new Error('Enter a valid asset tag.')
+    return assetsApi.createMaintenance({
+      assetId: asset.id, issue: record.issue, technician: record.technician,
+      serviceDate: record.date, cost: Number(record.cost) || 0, status: enumValue(record.status)
+    })
+  }, 'Maintenance record created.')
+  const setMaintenanceStatus = (id, status) => run(() => ['Completed', 'Cancelled'].includes(status)
+    ? assetsApi.maintenanceAction(id, status.toLowerCase())
+    : apiRequest(`/maintenance/${id}`, { method: 'PUT', body: { status: enumValue(status) } }), 'Maintenance status updated.')
+  const setSerialStatus = (id, status) => run(() => apiRequest(`/serial-numbers/${id}/status`, {
+    method: 'PATCH', body: { status: enumValue(status) }
+  }), 'Serial status updated.')
+  const markNotification = id => run(() => apiRequest(id ? `/notifications/${id}/read` : '/notifications/read-all', { method: 'POST' }))
+  const saveSettings = settings => run(() => apiRequest('/settings', { method: 'PUT', body: {
+    companyName: settings.company || '', companyLogo: settings.logo || '',
+    email: settings.email || '', phone: settings.phone || '', address: settings.address || '',
+    currency: 'PHP', defaultWarehouseId: requiredId(data.warehouses, settings.defaultWarehouse, 'default warehouse'),
+    lowStockNotifications: Boolean(settings.lowStockAlerts), warrantyNotifications: Boolean(settings.warrantyAlerts),
+    weeklySummary: Boolean(settings.weeklySummary), defaultMinimumStock: Number(settings.defaultMinStock) || 0
+  } }), 'Settings saved.')
+  const addUser = account => run(() => {
+    const [firstName, ...rest] = account.name.trim().split(/\s+/)
+    return apiRequest('/users', { method: 'POST', body: {
+      firstName, lastName: rest.join(' ') || firstName, email: account.email,
+      password: account.password,
+      roleId: data.roles.find(role => role.name === account.role)?.id,
+      warehouseId: account.warehouse === 'All locations' ? null : requiredId(data.warehouses, account.warehouse, 'warehouse')
+    } })
+  }, 'User added.')
+  const toggleUser = id => run(() => apiRequest(`/users/${id}/change-status`, { method: 'POST', body: {
+    status: data.users.find(user => user.id === id)?.status === 'Active' ? 'INACTIVE' : 'ACTIVE'
+  } }), 'User status updated.')
+  const setPermission = (role, module, action, enabled) => run(() => {
+    const roleRecord = data.roles.find(item => item.name === role)
+    const permission = data.permissionCatalog.find(item => item.module === module.toLowerCase() && item.action === action.toUpperCase())
+    if (!roleRecord || !permission) throw new Error('Unknown role or permission.')
+    const current = roleRecord.permissionIds.filter(id => id !== permission.id)
+    return apiRequest(`/roles/${roleRecord.id}/permissions`, { method: 'PUT', body: {
+      permissionIds: enabled ? [...current, permission.id] : current
+    } })
+  }, 'Permissions saved.')
+
+  return <InventoryContext.Provider value={{
+    ...data, user, authState, authError, retryConnection: restore, login, logout, refreshData, notify, toast,
+    saveProduct, importProducts, archiveProduct, adjustStock, createTransfer, transferAction,
+    addSupplier, addCategory, addBrand, toggleCategory, toggleBrand, addWarehouse, createOrder, orderAction,
+    receiveOrder, addAsset, assignAsset, returnAsset, addMaintenance, setMaintenanceStatus,
+    setSerialStatus, markNotification, saveSettings, addUser, toggleUser, setPermission
+  }}>{children}</InventoryContext.Provider>
+}
+
+export function useInventory() {
+  const value = useContext(InventoryContext)
+  if (!value) throw new Error('InventoryProvider missing')
+  return value
+}
