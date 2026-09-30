@@ -1,9 +1,12 @@
+import { warehouseWhere, requireWarehouseAccess } from './warehouseAccessService.js'
 import { prisma } from '../config/prisma.js'
 import { inventoryTransaction, changeStock } from './inventoryService.js'
 import { paginate } from '../utils/query.js'
 import { audit } from '../utils/audit.js'
 import { HttpError } from '../utils/http.js'
 import { nextReference } from '../utils/references.js'
+import { recordSerialEvents } from '../utils/serialEvents.js'
+import { currencyTotals } from '../utils/currency.js'
 
 const include = {
   supplier: true, warehouse: true,
@@ -11,8 +14,8 @@ const include = {
   items: { include: { product: true } }, receipts: { include: { items: true } }
 }
 
-export async function listOrders(query) {
-  const where = {}
+export async function listOrders(query, user) {
+  const where = warehouseWhere(user, query.warehouse)
   if (query.supplier) where.supplierId = query.supplier
   if (query.warehouse) where.warehouseId = query.warehouse
   if (query.status) where.status = query.status
@@ -24,9 +27,10 @@ export async function listOrders(query) {
   return paginate(prisma.purchaseOrder, { where, include, query, allowedSort: ['orderDate', 'createdAt', 'expectedDelivery', 'total', 'status'], defaultSort: 'createdAt' })
 }
 
-export async function getOrder(id) {
+export async function getOrder(id, user) {
   const order = await prisma.purchaseOrder.findUnique({ where: { id }, include })
   if (!order) throw new HttpError(404, 'Purchase order not found.')
+  requireWarehouseAccess(user, order.warehouseId)
   return order
 }
 
@@ -34,16 +38,17 @@ async function validatedLines(tx, input) {
   const ids = input.items.map(item => item.productId)
   const products = await tx.product.findMany({ where: { id: { in: ids }, status: 'ACTIVE' }, select: { id: true } })
   if (products.length !== ids.length) throw new HttpError(400, 'One or more products are unavailable.')
-  const lines = input.items.map(item => ({
-    productId: item.productId, quantity: item.quantity, unitCost: item.unitCost,
-    subtotal: item.quantity * item.unitCost
-  }))
-  const subtotal = lines.reduce((sum, item) => sum + item.subtotal, 0)
-  return { lines, subtotal, total: subtotal + input.tax + input.shipping }
+  const draftLines = input.items.map(item => ({ productId: item.productId, quantity: item.quantity, unitCost: item.unitCost }))
+  return currencyTotals(draftLines, input.tax, input.shipping, 'unitCost')
 }
 
 export async function createOrder(input, req) {
-  return inventoryTransaction(async tx => {
+  requireWarehouseAccess(req.user, input.warehouseId)
+  return inventoryTransaction(tx => createOrderInTransaction(tx, input, req))
+}
+
+export async function createOrderInTransaction(tx, input, req) {
+    requireWarehouseAccess(req.user, input.warehouseId)
     const [supplier, warehouse] = await Promise.all([
       tx.supplier.findUnique({ where: { id: input.supplierId } }),
       tx.warehouse.findUnique({ where: { id: input.warehouseId } })
@@ -57,15 +62,16 @@ export async function createOrder(input, req) {
       reference: input.reference, notes: input.notes, subtotal, tax: input.tax,
       shipping: input.shipping, total, items: { create: lines }
     }, include })
-    await audit(tx, req, 'CREATED', 'Purchasing', 'PurchaseOrder', order.id, `Created ${poNumber}.`)
+    await audit(tx, req, 'CREATED', 'Purchasing', 'PurchaseOrder', order.id, `Created ${poNumber}.`, { warehouseId: input.warehouseId })
     return order
-  })
 }
 
 export async function updateOrder(id, input, req) {
+  requireWarehouseAccess(req.user, input.warehouseId)
   return inventoryTransaction(async tx => {
     const existing = await tx.purchaseOrder.findUnique({ where: { id } })
     if (!existing) throw new HttpError(404, 'Purchase order not found.')
+    requireWarehouseAccess(req.user, existing.warehouseId)
     if (existing.status !== 'DRAFT') throw new HttpError(409, 'Only draft purchase orders can be edited.')
     const { lines, subtotal, total } = await validatedLines(tx, input)
     await tx.purchaseOrderItem.deleteMany({ where: { purchaseOrderId: id } })
@@ -75,7 +81,7 @@ export async function updateOrder(id, input, req) {
       notes: input.notes, subtotal, tax: input.tax, shipping: input.shipping,
       total, items: { create: lines }
     }, include })
-    await audit(tx, req, 'UPDATED', 'Purchasing', 'PurchaseOrder', id, `Updated ${order.poNumber}.`)
+    await audit(tx, req, 'UPDATED', 'Purchasing', 'PurchaseOrder', id, `Updated ${order.poNumber}.`, { warehouseId: order.warehouseId })
     return order
   })
 }
@@ -90,11 +96,12 @@ export async function transitionOrder(id, event, req) {
   return inventoryTransaction(async tx => {
     const order = await tx.purchaseOrder.findUnique({ where: { id } })
     if (!order) throw new HttpError(404, 'Purchase order not found.')
+    requireWarehouseAccess(req.user, order.warehouseId)
     if (!transition.from.includes(order.status)) throw new HttpError(409, `Cannot ${event} a ${order.status.toLowerCase()} purchase order.`)
     const changed = await tx.purchaseOrder.update({ where: { id }, data: {
       status: transition.to, ...(event === 'approve' ? { approvedById: req.user.id } : {})
     } })
-    await audit(tx, req, event.toUpperCase(), 'Purchasing', 'PurchaseOrder', id, `${event} ${order.poNumber}.`)
+    await audit(tx, req, event.toUpperCase(), 'Purchasing', 'PurchaseOrder', id, `${event} ${order.poNumber}.`, { warehouseId: order.warehouseId })
     if (event === 'submit') {
       const approvers = await tx.user.findMany({ where: { role: { name: 'Administrator' }, status: 'ACTIVE' }, select: { id: true } })
       if (approvers.length) await tx.notification.createMany({ data: approvers.map(user => ({
@@ -103,7 +110,7 @@ export async function transitionOrder(id, event, req) {
       })) })
     }
     if (event === 'approve') await tx.notification.create({ data: {
-      userId: order.createdById, type: 'PURCHASE_APPROVED', title: 'Purchase order approved',
+      userId: order.createdById, warehouseId: order.warehouseId, type: 'PURCHASE_APPROVED', title: 'Purchase order approved',
       message: `${order.poNumber} was approved.`, referenceType: 'PurchaseOrder', referenceId: id
     } })
     return changed
@@ -114,6 +121,7 @@ export async function receiveOrder(id, input, req) {
   return inventoryTransaction(async tx => {
     const order = await tx.purchaseOrder.findUnique({ where: { id }, include: { items: { include: { product: true } } } })
     if (!order) throw new HttpError(404, 'Purchase order not found.')
+    requireWarehouseAccess(req.user, order.warehouseId)
     if (!['APPROVED', 'ORDERED', 'PARTIAL'].includes(order.status)) throw new HttpError(409, 'This purchase order is not ready for receiving.')
     if (new Set(input.items.map(item => item.purchaseOrderItemId)).size !== input.items.length) throw new HttpError(400, 'Duplicate purchase order item.')
     const byId = new Map(order.items.map(item => [item.id, item]))
@@ -153,17 +161,20 @@ export async function receiveOrder(id, input, req) {
         warrantyEnd.setMonth(warrantyEnd.getMonth() + ordered.product.warrantyMonths)
         await tx.serialNumber.createMany({ data: item.serialNumbers.map(serialNumber => ({
           serialNumber, productId: ordered.productId, warehouseId: order.warehouseId,
-          purchaseOrderItemId: ordered.id, supplierId: order.supplierId,
+          purchaseOrderItemId: ordered.id, receiptId: receipt.id, supplierId: order.supplierId,
           warrantyStart, warrantyEnd
         })) })
+        const receivedSerials = await tx.serialNumber.findMany({ where: { receiptId: receipt.id, serialNumber: { in: item.serialNumbers } }, select: { id: true } })
+        await recordSerialEvents(tx, receivedSerials.map(serial => serial.id), { type: 'RECEIVED', toStatus: 'AVAILABLE', warehouseId: order.warehouseId,
+          referenceType: 'PurchaseReceipt', referenceId: receipt.id, referenceNumber: receiptNumber, notes: `Received from ${order.poNumber}` }, req)
       }
     }
     const receivedByItem = new Map(input.items.map(item => [item.purchaseOrderItemId, item.quantity]))
     const complete = order.items.every(item => item.receivedQuantity + (receivedByItem.get(item.id) || 0) === item.quantity)
     await tx.purchaseOrder.update({ where: { id }, data: { status: complete ? 'RECEIVED' : 'PARTIAL' } })
-    await audit(tx, req, 'RECEIVED', 'Purchasing', 'PurchaseReceipt', receipt.id, `Received ${receiptNumber} for ${order.poNumber}.`)
+    await audit(tx, req, 'RECEIVED', 'Purchasing', 'PurchaseReceipt', receipt.id, `Received ${receiptNumber} for ${order.poNumber}.`, { warehouseId: order.warehouseId })
     await tx.notification.create({ data: {
-      userId: order.createdById, type: 'PURCHASE_RECEIVING', title: 'Purchase order received',
+      userId: order.createdById, warehouseId: order.warehouseId, type: 'PURCHASE_RECEIVING', title: 'Purchase order received',
       message: `${order.poNumber} was ${complete ? 'fully' : 'partially'} received.`, referenceType: 'PurchaseOrder', referenceId: id
     } })
     return { ...receipt, status: complete ? 'RECEIVED' : 'PARTIAL' }

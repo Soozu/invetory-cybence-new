@@ -1,3 +1,4 @@
+import { warehouseWhere, getAccessibleWarehouseIds, activityWhere } from './warehouseAccessService.js'
 import { prisma } from '../config/prisma.js'
 import { stockAlerts } from './monitoringService.js'
 import { HttpError } from '../utils/http.js'
@@ -11,11 +12,11 @@ export function periodWindow(period = '30d') {
   return { from, days: periods[period] }
 }
 
-export async function summary() {
+export async function summary(user) {
   const [totalProducts, stocks, low, out, activeSuppliers] = await Promise.all([
-    prisma.product.count({ where: { status: 'ACTIVE' } }),
-    prisma.warehouseStock.findMany({ select: { quantity: true, product: { select: { purchaseCost: true } } } }),
-    stockAlerts('low'), stockAlerts('out'),
+    prisma.product.count({ where: { status: 'ACTIVE', ...(getAccessibleWarehouseIds(user) === null ? {} : { stocks: { some: warehouseWhere(user) } }) } }),
+    prisma.warehouseStock.findMany({ where: warehouseWhere(user), select: { quantity: true, product: { select: { purchaseCost: true } } } }),
+    stockAlerts('low', user), stockAlerts('out', user),
     prisma.supplier.count({ where: { status: 'ACTIVE' } })
   ])
   return {
@@ -25,9 +26,9 @@ export async function summary() {
   }
 }
 
-export async function movements(period) {
+export async function movements(period, user) {
   const { from, days } = periodWindow(period)
-  const rows = await prisma.stockMovement.findMany({ where: { createdAt: { gte: from } }, select: { createdAt: true, quantity: true, type: true } })
+  const rows = await prisma.stockMovement.findMany({ where: { createdAt: { gte: from }, ...warehouseWhere(user) }, select: { createdAt: true, quantity: true, type: true } })
   const monthly = days > 30
   const points = new Map()
   for (let offset = 0; offset < days; offset++) {
@@ -46,9 +47,9 @@ export async function movements(period) {
   return [...points.values()]
 }
 
-export async function categoryDistribution() {
+export async function categoryDistribution(user) {
   const rows = await prisma.warehouseStock.findMany({
-    select: { quantity: true, product: { select: { category: { select: { id: true, name: true } } } } }
+    where: warehouseWhere(user), select: { quantity: true, product: { select: { category: { select: { id: true, name: true } } } } }
   })
   const values = new Map()
   for (const row of rows) {
@@ -60,6 +61,6 @@ export async function categoryDistribution() {
   return [...values.values()].sort((a, b) => b.quantity - a.quantity)
 }
 
-export async function recentActivity(limit = 8) {
-  return prisma.activityLog.findMany({ take: Math.min(25, Math.max(1, Number(limit) || 8)), orderBy: { createdAt: 'desc' }, include: { user: { select: { firstName: true, lastName: true } } } })
+export async function recentActivity(limit = 8, user) {
+  return prisma.activityLog.findMany({ where: activityWhere(user), take: Math.min(25, Math.max(1, Number(limit) || 8)), orderBy: { createdAt: 'desc' }, include: { user: { select: { firstName: true, lastName: true } } } })
 }

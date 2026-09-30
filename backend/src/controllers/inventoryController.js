@@ -1,3 +1,4 @@
+import { warehouseWhere, serialWhere } from '../services/warehouseAccessService.js'
 import { prisma } from '../config/prisma.js'
 import { ok, HttpError } from '../utils/http.js'
 import { paginate } from '../utils/query.js'
@@ -7,7 +8,7 @@ import { stockAlerts, warrantyRecords } from '../services/monitoringService.js'
 export const adjustment = async (req, res) => ok(res, await adjustStock(req.validated, req), 'Stock adjusted successfully.', 201)
 
 export const stocks = async (req, res) => {
-  const where = {}
+  const where = warehouseWhere(req.user, req.query.warehouse)
   if (req.query.product) where.productId = req.query.product
   if (req.query.warehouse) where.warehouseId = req.query.warehouse
   const result = await paginate(prisma.warehouseStock, {
@@ -18,7 +19,7 @@ export const stocks = async (req, res) => {
 }
 
 export const movements = async (req, res) => {
-  const where = {}
+  const where = warehouseWhere(req.user, req.query.warehouse)
   if (req.query.product) where.productId = req.query.product
   if (req.query.warehouse) where.warehouseId = req.query.warehouse
   if (req.query.movementType) where.type = req.query.movementType
@@ -35,7 +36,7 @@ export const movements = async (req, res) => {
 }
 
 export const serials = async (req, res) => {
-  const where = {}
+  const where = req.query.warehouse ? warehouseWhere(req.user, req.query.warehouse) : {}
   if (req.query.product) where.productId = req.query.product
   if (req.query.warehouse) where.warehouseId = req.query.warehouse
   if (req.query.status) where.status = req.query.status
@@ -46,7 +47,7 @@ export const serials = async (req, res) => {
   if (req.query.warrantyStatus === 'expiring') where.warrantyEnd = { gte: now, lte: soon }
   if (req.query.warrantyStatus === 'active') where.warrantyEnd = { gt: soon }
   const result = await paginate(prisma.serialNumber, {
-    where, include: { product: true, warehouse: true, supplier: true, purchaseOrderItem: { include: { purchaseOrder: true } }, asset: { include: { assignments: { where: { status: 'ACTIVE' } } } } },
+    where: { AND: [where, serialWhere(req.user)] }, include: { product: true, warehouse: true, supplier: true, purchaseOrderItem: { include: { purchaseOrder: true } }, asset: { include: { assignments: { where: { status: 'ACTIVE' } } } } },
     query: req.query, allowedSort: ['createdAt', 'serialNumber', 'warrantyEnd', 'status'], defaultSort: 'createdAt'
   })
   ok(res, result.data, 'OK', 200, { pagination: result.pagination })
@@ -55,9 +56,10 @@ export const serials = async (req, res) => {
 export const serial = async (req, res) => {
   const row = await prisma.serialNumber.findUnique({ where: { id: req.params.id }, include: { product: true, warehouse: true, supplier: true } })
   if (!row) throw new HttpError(404, 'Serial number not found.')
+  if (!await prisma.serialNumber.count({ where: { id: row.id, ...serialWhere(req.user) } })) throw new HttpError(403, 'You do not have access to this serial number.')
   ok(res, row)
 }
 export const serialStatus = async (req, res) => ok(res, await changeSerialStatus(req.params.id, req.validated.status, req), 'Serial status updated.')
-export const lowStock = async (req, res) => ok(res, await stockAlerts('low'))
-export const outOfStock = async (req, res) => ok(res, await stockAlerts('out'))
-export const warranties = async (req, res) => ok(res, await warrantyRecords(req.query.status))
+export const lowStock = async (req, res) => ok(res, await stockAlerts('low', req.user))
+export const outOfStock = async (req, res) => ok(res, await stockAlerts('out', req.user))
+export const warranties = async (req, res) => ok(res, await warrantyRecords(req.query.status, req.user))

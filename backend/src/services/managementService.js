@@ -5,11 +5,32 @@ import { paginate } from '../utils/query.js'
 import { audit } from '../utils/audit.js'
 import { HttpError } from '../utils/http.js'
 import { publicUser } from '../middleware/auth.js'
+import { requireWarehouseAdministration, isAdministrator } from './warehouseAccessService.js'
 
-const userInclude = { role: { include: { permissions: { include: { permission: true } } } }, warehouse: true }
+const userInclude = { role: { include: { permissions: { include: { permission: true } } } }, warehouse: true, warehouseAssignments: { include: { warehouse: { select: { id: true, name: true } } } } }
 
-export async function listUsers(query) {
-  const where = {}
+export function userScope(user) {
+  return isAdministrator(user) ? {} : { id: user.id }
+}
+
+async function assignmentData(tx, input, req) {
+  requireWarehouseAdministration(req.user)
+  const warehouseIds = input.warehouseIds ?? (input.warehouseId ? [input.warehouseId] : [])
+  const defaultWarehouseId = input.defaultWarehouseId ?? input.warehouseId ?? warehouseIds[0] ?? null
+  if (defaultWarehouseId && !warehouseIds.includes(defaultWarehouseId)) throw new HttpError(400, 'Default warehouse must be assigned.')
+  if (await tx.warehouse.count({ where: { id: { in: warehouseIds }, status: 'ACTIVE' } }) !== warehouseIds.length) {
+    throw new HttpError(400, 'One or more assigned warehouses are unavailable.')
+  }
+  return { defaultWarehouseId, rows: warehouseIds.map(warehouseId => ({ warehouseId, isDefault: warehouseId === defaultWarehouseId })) }
+}
+
+const userView = user => ({
+  ...publicUser(user), warehouse: user.warehouse,
+  warehouseAssignments: user.warehouseAssignments?.map(item => ({ warehouseId: item.warehouseId, isDefault: item.isDefault, warehouse: item.warehouse })) || []
+})
+
+export async function listUsers(query, user) {
+  const where = { AND: [userScope(user)] }
   if (query.search) where.OR = [
     { firstName: { contains: query.search } }, { lastName: { contains: query.search } },
     { email: { contains: query.search } }
@@ -17,35 +38,50 @@ export async function listUsers(query) {
   if (query.role) where.roleId = query.role
   if (query.status) where.status = query.status
   const result = await paginate(prisma.user, { where, include: userInclude, query, allowedSort: ['firstName', 'lastName', 'email', 'createdAt', 'lastLoginAt', 'status'], defaultSort: 'createdAt' })
-  result.data = result.data.map(user => ({ ...publicUser(user), warehouse: user.warehouse }))
+  result.data = result.data.map(userView)
   return result
 }
 
-export async function getUser(id) {
+export async function getUser(id, actor) {
   const user = await prisma.user.findUnique({ where: { id }, include: userInclude })
   if (!user) throw new HttpError(404, 'User not found.')
-  return { ...publicUser(user), warehouse: user.warehouse }
+  if (!isAdministrator(actor) && !await prisma.user.count({ where: { AND: [{ id }, userScope(actor)] } })) throw new HttpError(403, 'You do not have access to this user.')
+  return userView(user)
 }
 
 export async function createUser(input, req) {
-  const { password, ...data } = input
+  requireWarehouseAdministration(req.user)
+  const { password, warehouseIds, defaultWarehouseId, warehouseId, ...data } = input
   const passwordHash = await bcrypt.hash(password, 12)
   return inventoryTransaction(async tx => {
-    const user = await tx.user.create({ data: { ...data, email: data.email.toLowerCase(), passwordHash }, include: userInclude })
+    const assignment = await assignmentData(tx, input, req)
+    const user = await tx.user.create({ data: {
+      ...data, email: data.email.toLowerCase(), passwordHash,
+      warehouseId: assignment.defaultWarehouseId, warehouseAssignments: { create: assignment.rows }
+    }, include: userInclude })
     await audit(tx, req, 'CREATED', 'Users', 'User', user.id, `Created user ${user.email}.`)
-    return publicUser(user)
+    return userView(user)
   })
 }
 
 export async function updateUser(id, input, req) {
   return inventoryTransaction(async tx => {
-    const user = await tx.user.update({ where: { id }, data: { ...input, ...(input.email ? { email: input.email.toLowerCase() } : {}) }, include: userInclude })
+    requireWarehouseAdministration(req.user)
+    const { warehouseIds, defaultWarehouseId, warehouseId, ...data } = input
+    const hasAssignments = ['warehouseIds', 'defaultWarehouseId', 'warehouseId'].some(key => key in input)
+    const assignment = hasAssignments ? await assignmentData(tx, input, req) : null
+    if (assignment) await tx.userWarehouse.deleteMany({ where: { userId: id } })
+    const user = await tx.user.update({ where: { id }, data: {
+      ...data, ...(input.email ? { email: input.email.toLowerCase() } : {}),
+      ...(assignment ? { warehouseId: assignment.defaultWarehouseId, warehouseAssignments: { create: assignment.rows } } : {})
+    }, include: userInclude })
     await audit(tx, req, 'UPDATED', 'Users', 'User', id, `Updated user ${user.email}.`)
-    return publicUser(user)
+    return userView(user)
   })
 }
 
 export async function changeUserStatus(id, status, req) {
+  requireWarehouseAdministration(req.user)
   if (id === req.user.id && status !== 'ACTIVE') throw new HttpError(400, 'You cannot deactivate your own account.')
   return inventoryTransaction(async tx => {
     const user = await tx.user.update({ where: { id }, data: { status }, include: userInclude })
@@ -56,6 +92,7 @@ export async function changeUserStatus(id, status, req) {
 }
 
 export async function resetPassword(id, password, req) {
+  requireWarehouseAdministration(req.user)
   const passwordHash = await bcrypt.hash(password, 12)
   return inventoryTransaction(async tx => {
     const user = await tx.user.update({ where: { id }, data: { passwordHash } })
@@ -69,6 +106,7 @@ export async function listRoles() {
   return prisma.role.findMany({ include: { permissions: { include: { permission: true } }, _count: { select: { users: true } } }, orderBy: { name: 'asc' } })
 }
 export async function createRole(input, req) {
+  requireWarehouseAdministration(req.user)
   return inventoryTransaction(async tx => {
     const role = await tx.role.create({ data: input })
     await audit(tx, req, 'CREATED', 'Users', 'Role', role.id, `Created role ${role.name}.`)
@@ -76,6 +114,7 @@ export async function createRole(input, req) {
   })
 }
 export async function updateRole(id, input, req) {
+  requireWarehouseAdministration(req.user)
   return inventoryTransaction(async tx => {
     const role = await tx.role.update({ where: { id }, data: input })
     await audit(tx, req, 'UPDATED', 'Users', 'Role', id, `Updated role ${role.name}.`)
@@ -83,6 +122,7 @@ export async function updateRole(id, input, req) {
   })
 }
 export async function deleteRole(id, req) {
+  requireWarehouseAdministration(req.user)
   return inventoryTransaction(async tx => {
     const role = await tx.role.findUnique({ where: { id }, include: { _count: { select: { users: true } } } })
     if (!role) throw new HttpError(404, 'Role not found.')
@@ -94,6 +134,7 @@ export async function deleteRole(id, req) {
   })
 }
 export async function setRolePermissions(id, permissionIds, req) {
+  requireWarehouseAdministration(req.user)
   return inventoryTransaction(async tx => {
     const role = await tx.role.findUnique({ where: { id } })
     if (!role) throw new HttpError(404, 'Role not found.')

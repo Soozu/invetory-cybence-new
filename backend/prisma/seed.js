@@ -2,16 +2,13 @@ import 'dotenv/config'
 import crypto from 'node:crypto'
 import bcrypt from 'bcrypt'
 import { PrismaClient } from '@prisma/client'
-import {
-  seedAssets, seedBrands, seedCategories, seedMaintenance, seedOrders, seedTransfers,
-  seedProducts, seedSuppliers, seedUsers, seedWarehouses
-} from '../../src/data/mockData.js'
+import { seedAssets, seedBrands, seedCategories, seedMaintenance, seedOrders, seedTransfers, seedProducts, seedSuppliers, seedUsers, seedWarehouses } from './seedData.js'
 
 const prisma = new PrismaClient()
 const date = value => value ? new Date(`${value.slice(0, 10)}T00:00:00.000Z`) : null
 const slug = value => value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
 const warrantyMonths = value => Number.parseInt(value, 10) || 0
-const modules = ['dashboard', 'products', 'categories', 'brands', 'inventory', 'suppliers', 'purchasing', 'warehouses', 'assets', 'reports', 'users', 'settings']
+const modules = ['dashboard', 'products', 'categories', 'brands', 'inventory', 'stock_counts', 'reservations', 'purchase_requests', 'rfqs', 'suppliers', 'purchasing', 'warehouses', 'assets', 'reports', 'users', 'settings']
 const actions = ['VIEW', 'CREATE', 'EDIT', 'DELETE', 'APPROVE', 'EXPORT']
 const roleNames = ['Administrator', 'Inventory Manager', 'Warehouse Staff', 'Procurement Officer', 'Asset Manager', 'Viewer']
 const status = value => ({ Available: 'AVAILABLE', Assigned: 'ASSIGNED', Reserved: 'RESERVED', 'For Repair': 'FOR_REPAIR', Maintenance: 'MAINTENANCE', 'In Repair': 'IN_REPAIR', Completed: 'COMPLETED', Scheduled: 'SCHEDULED' })[value] || value?.toUpperCase().replaceAll(' ', '_')
@@ -20,19 +17,20 @@ async function main() {
   const roles = new Map()
   for (const name of roleNames) roles.set(name, await prisma.role.upsert({ where: { name }, update: {}, create: { name, description: `${name} access` } }))
   const permissions = []
-  for (const module of modules) for (const action of actions) {
+  for (const module of modules) for (const action of (module === 'reservations' ? ['VIEW', 'CREATE', 'RELEASE', 'FULFILL'] : module === 'purchase_requests' ? ['VIEW', 'CREATE', 'EDIT', 'APPROVE', 'CONVERT'] : module === 'rfqs' ? ['VIEW','CREATE','EDIT','ISSUE','CLOSE','AWARD','CONVERT'] : actions)) {
+    if (module === 'stock_counts' && !['VIEW', 'CREATE', 'EDIT', 'APPROVE'].includes(action)) continue
     const permission = await prisma.permission.upsert({ where: { module_action: { module, action } }, update: {}, create: { module, action } })
     permissions.push(permission)
   }
   const roleModules = {
-    'Inventory Manager': ['dashboard', 'products', 'categories', 'brands', 'inventory', 'suppliers', 'warehouses', 'reports'],
-    'Warehouse Staff': ['dashboard', 'products', 'inventory', 'warehouses'],
-    'Procurement Officer': ['dashboard', 'products', 'suppliers', 'purchasing', 'reports'],
+    'Inventory Manager': ['dashboard', 'products', 'categories', 'brands', 'inventory', 'stock_counts', 'reservations', 'purchase_requests', 'rfqs', 'suppliers', 'warehouses', 'reports'],
+    'Warehouse Staff': ['dashboard', 'products', 'inventory', 'stock_counts', 'reservations', 'purchase_requests', 'warehouses'],
+    'Procurement Officer': ['dashboard', 'products', 'suppliers', 'purchase_requests', 'rfqs', 'purchasing', 'reports'],
     'Asset Manager': ['dashboard', 'products', 'inventory', 'assets', 'reports'],
     Viewer: modules
   }
   for (const [name, allowedModules] of Object.entries(roleModules)) {
-    const allowed = permissions.filter(permission => allowedModules.includes(permission.module) && (name !== 'Viewer' ? true : permission.action === 'VIEW'))
+    const allowed = permissions.filter(permission => allowedModules.includes(permission.module) && (name !== 'Viewer' ? true : permission.action === 'VIEW') && !(name === 'Warehouse Staff' && ['stock_counts', 'purchase_requests'].includes(permission.module) && !['VIEW', 'CREATE', 'EDIT'].includes(permission.action)) && !(name === 'Inventory Manager' && ['purchase_requests','rfqs'].includes(permission.module) && permission.action === 'CONVERT'))
     await prisma.rolePermission.createMany({ data: allowed.map(permission => ({ roleId: roles.get(name).id, permissionId: permission.id })), skipDuplicates: true })
   }
   const adminEmail = (process.env.SEED_ADMIN_EMAIL || 'admin@techstock.local').toLowerCase()
@@ -56,6 +54,9 @@ async function main() {
       roleId: roles.get(seed.role).id, warehouseId: warehouses.get(seed.warehouse)?.id || null
     } })
     users.set(seed.name, user)
+    if (user.warehouseId && !await prisma.userWarehouse.count({ where: { userId: user.id } })) {
+      await prisma.userWarehouse.create({ data: { userId: user.id, warehouseId: user.warehouseId, isDefault: true } })
+    }
   }
   for (const seed of seedWarehouses) if (users.has(seed.manager)) {
     await prisma.warehouse.update({ where: { id: warehouses.get(seed.name).id }, data: { managerId: users.get(seed.manager).id } })

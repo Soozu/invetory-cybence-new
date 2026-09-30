@@ -1,3 +1,4 @@
+import { warehouseWhere, requireWarehouseAccess, requireWarehouseAdministration } from './warehouseAccessService.js'
 import { prisma } from '../config/prisma.js'
 import { inventoryTransaction } from './inventoryService.js'
 import { paginate } from '../utils/query.js'
@@ -16,15 +17,16 @@ const config = {
 const slugify = value => value.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
 const searchWhere = (fields, search) => search ? { OR: fields.map(field => ({ [field]: { contains: search } })) } : {}
 
-export async function listCatalog(kind, query) {
+export async function listCatalog(kind, query, user) {
   const item = config[kind]
-  const where = { ...searchWhere(item.search, query.search) }
+  const where = { ...searchWhere(item.search, query.search), ...(kind === 'warehouses' ? warehouseWhere(user, undefined, 'id') : {}) }
   if (query.status) where.status = query.status
   if (kind === 'categories' && query.parentId) where.parentId = query.parentId
   return paginate(prisma[item.model], { where, query, allowedSort: item.sort, defaultSort: 'name' })
 }
 
-export async function getCatalog(kind, id) {
+export async function getCatalog(kind, id, user) {
+  if (kind === 'warehouses') requireWarehouseAccess(user, id)
   const item = config[kind]
   const record = await prisma[item.model].findUnique({ where: { id } })
   if (!record) throw new HttpError(404, `${kind.slice(0, -1)} not found.`)
@@ -42,6 +44,7 @@ async function assertCategoryParent(tx, id, parentId) {
 }
 
 export async function createCatalog(kind, input, req) {
+  if (kind === 'warehouses') requireWarehouseAdministration(req.user)
   const item = config[kind]
   return inventoryTransaction(async tx => {
     const data = { ...input }
@@ -56,6 +59,7 @@ export async function createCatalog(kind, input, req) {
 }
 
 export async function updateCatalog(kind, id, input, req) {
+  if (kind === 'warehouses') requireWarehouseAccess(req.user, id)
   const item = config[kind]
   return inventoryTransaction(async tx => {
     const existing = await tx[item.model].findUnique({ where: { id } })
@@ -70,6 +74,7 @@ export async function updateCatalog(kind, id, input, req) {
 }
 
 export async function deleteCatalog(kind, id, req) {
+  if (kind === 'warehouses') requireWarehouseAccess(req.user, id)
   const item = config[kind]
   return inventoryTransaction(async tx => {
     const existing = await tx[item.model].findUnique({ where: { id } })
@@ -93,19 +98,19 @@ const productInclude = {
   category: true, brand: true, defaultSupplier: true,
   stocks: { include: { warehouse: true } }
 }
-export async function listProducts(query) {
+export async function listProducts(query, user) {
   const where = { ...searchWhere(['name', 'sku', 'model', 'barcode'], query.search) }
   if (query.category) where.categoryId = query.category
   if (query.brand) where.brandId = query.brand
   if (query.supplier) where.defaultSupplierId = query.supplier
   if (query.status) where.status = query.status
-  if (query.warehouse) where.stocks = { some: { warehouseId: query.warehouse } }
+  if (query.warehouse) where.stocks = { some: warehouseWhere(user, query.warehouse) }
   if (['OUT_OF_STOCK', 'LOW_STOCK'].includes(query.stockStatus)) {
-    const matching = await stockAlerts(query.stockStatus === 'OUT_OF_STOCK' ? 'out' : 'low')
+    const matching = await stockAlerts(query.stockStatus === 'OUT_OF_STOCK' ? 'out' : 'low', user, query.warehouse)
     where.id = { in: matching.map(product => product.id) }
   }
   const result = await paginate(prisma.product, {
-    where, include: productInclude, query,
+    where, include: { ...productInclude, stocks: { ...productInclude.stocks, where: warehouseWhere(user, query.warehouse) } }, query,
     allowedSort: ['name', 'sku', 'createdAt', 'purchaseCost', 'status'], defaultSort: 'createdAt'
   })
   result.data = result.data.map(productView)
@@ -118,8 +123,8 @@ export function productView(product) {
   return { ...product, purchaseCost: Number(product.purchaseCost), quantity, reservedQuantity, availableStock: quantity - reservedQuantity }
 }
 
-export async function getProduct(id) {
-  const product = await prisma.product.findUnique({ where: { id }, include: productInclude })
+export async function getProduct(id, user) {
+  const product = await prisma.product.findUnique({ where: { id }, include: { ...productInclude, stocks: { ...productInclude.stocks, where: warehouseWhere(user) } } })
   if (!product) throw new HttpError(404, 'Product not found.')
   return productView(product)
 }

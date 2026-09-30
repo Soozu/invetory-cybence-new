@@ -10,12 +10,17 @@ import { authRoutes } from './routes/authRoutes.js'
 import { catalogRoutes } from './routes/catalogRoutes.js'
 import { inventoryRoutes } from './routes/inventoryRoutes.js'
 import { procurementRoutes } from './routes/procurementRoutes.js'
+import { purchaseRequestRoutes } from './routes/purchaseRequestRoutes.js'
+import { rfqRoutes } from './routes/rfqRoutes.js'
 import { transferRoutes } from './routes/transferRoutes.js'
 import { assetRoutes } from './routes/assetRoutes.js'
 import { dashboardRoutes } from './routes/dashboardRoutes.js'
 import { reportRoutes } from './routes/reportRoutes.js'
 import { managementRoutes } from './routes/managementRoutes.js'
 import { bootstrapRoutes } from './routes/bootstrapRoutes.js'
+import { stockCountRoutes } from './routes/stockCountRoutes.js'
+import { reservationRoutes } from './routes/reservationRoutes.js'
+import { barcodeRoutes } from './routes/barcodeRoutes.js'
 import { notFound, errorHandler } from './middleware/errorHandler.js'
 
 export const app = express()
@@ -43,6 +48,11 @@ app.get('/api/health', async (req, res) => {
 })
 app.use('/api/auth', authRoutes)
 app.use('/api/bootstrap', bootstrapRoutes)
+app.use('/api/stock-counts', stockCountRoutes)
+app.use('/api/reservations', reservationRoutes)
+app.use('/api/purchase-requests', purchaseRequestRoutes)
+app.use('/api/rfqs', rfqRoutes)
+app.use('/api', barcodeRoutes)
 app.use('/api', catalogRoutes)
 app.use('/api', inventoryRoutes)
 app.use('/api', procurementRoutes)

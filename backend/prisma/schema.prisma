@@ -13,6 +13,22 @@ enum UserStatus {
   SUSPENDED
 }
 
+enum StockCountStatus {
+  DRAFT
+  IN_PROGRESS
+  SUBMITTED
+  APPROVED
+  CANCELLED
+}
+
+enum ReservationStatus {
+  ACTIVE
+  FULFILLED
+  RELEASED
+  EXPIRED
+  CANCELLED
+}
+
 enum CatalogStatus {
   ACTIVE
   INACTIVE
@@ -26,6 +42,8 @@ enum ProductStatus {
 
 enum SerialStatus {
   AVAILABLE
+  MISSING
+  ISSUED
   ASSIGNED
   RESERVED
   DEFECTIVE
@@ -47,6 +65,9 @@ enum MovementType {
   OPENING_STOCK
   ASSET_ASSIGNMENT
   ASSET_RETURN
+  RESERVATION_CREATED
+  RESERVATION_RELEASED
+  RESERVATION_EXPIRED
 }
 
 enum AdjustmentType {
@@ -114,6 +135,7 @@ model User {
   updatedAt DateTime @updatedAt
   role Role @relation(fields: [roleId], references: [id])
   warehouse Warehouse? @relation("WarehouseUsers", fields: [warehouseId], references: [id])
+  warehouseAssignments UserWarehouse[]
   managedWarehouses Warehouse[] @relation("WarehouseManager")
   refreshTokens RefreshToken[]
   requestedTransfers StockTransfer[] @relation("TransferRequester")
@@ -129,7 +151,28 @@ model User {
   notifications Notification[]
   activityLogs ActivityLog[]
   updatedSettings SystemSetting[]
+  createdStockCounts StockCount[] @relation("CountCreator")
+  inventoryReservations InventoryReservation[]
+  approvedStockCounts StockCount[] @relation("CountApprover")
+  serialEvents SerialEvent[]
+  purchaseRequests PurchaseRequest[] @relation("RequestCreator")
+  approvedPurchaseRequests PurchaseRequest[] @relation("RequestApprover")
+  rejectedPurchaseRequests PurchaseRequest[] @relation("RequestRejector")
+  rfqs RFQ[] @relation("RFQCreator")
+  awardedRFQs RFQ[] @relation("RFQAwarder")
   @@index([roleId])
+  @@index([warehouseId])
+}
+
+model UserWarehouse {
+  id String @id @default(cuid())
+  userId String
+  warehouseId String
+  isDefault Boolean @default(false)
+  createdAt DateTime @default(now())
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  @@unique([userId, warehouseId])
   @@index([warehouseId])
 }
 
@@ -216,6 +259,8 @@ model Supplier {
   products Product[]
   serialNumbers SerialNumber[]
   purchaseOrders PurchaseOrder[]
+  rfqInvitations RFQSupplier[]
+  quotations SupplierQuotation[]
 }
 
 model Warehouse {
@@ -231,6 +276,7 @@ model Warehouse {
   updatedAt DateTime @updatedAt
   manager User? @relation("WarehouseManager", fields: [managerId], references: [id])
   users User[] @relation("WarehouseUsers")
+  userAssignments UserWarehouse[]
   stock WarehouseStock[]
   serialNumbers SerialNumber[]
   movements StockMovement[] @relation("MovementWarehouse")
@@ -242,6 +288,12 @@ model Warehouse {
   purchaseOrders PurchaseOrder[]
   receipts PurchaseReceipt[]
   assets Asset[]
+  stockCounts StockCount[]
+  reservations InventoryReservation[]
+  serialEvents SerialEvent[] @relation("SerialEventWarehouse")
+  relatedSerialEvents SerialEvent[] @relation("SerialEventRelatedWarehouse")
+  purchaseRequests PurchaseRequest[]
+  rfqs RFQ[]
   @@index([managerId])
 }
 
@@ -277,6 +329,10 @@ model Product {
   purchaseOrderItems PurchaseOrderItem[]
   receiptItems PurchaseReceiptItem[]
   assets Asset[]
+  stockCountItems StockCountItem[]
+  reservationItems InventoryReservationItem[]
+  purchaseRequestItems PurchaseRequestItem[]
+  rfqItems RFQItem[]
   @@index([categoryId])
   @@index([brandId])
   @@index([defaultSupplierId])
@@ -316,6 +372,11 @@ model SerialNumber {
   asset Asset?
   maintenanceRecords MaintenanceRecord[]
   transferSelections StockTransferSerial[]
+  countSnapshots StockCountSerial[]
+  reservationSelections InventoryReservationSerial[]
+  receiptId String?
+  receipt PurchaseReceipt? @relation(fields: [receiptId], references: [id])
+  events SerialEvent[]
   @@index([productId, status])
   @@index([warehouseId])
   @@index([warrantyEnd])
@@ -330,6 +391,8 @@ model StockMovement {
   quantity Int
   previousQuantity Int
   newQuantity Int
+  previousReservedQuantity Int?
+  newReservedQuantity Int?
   sourceWarehouseId String?
   destinationWarehouseId String?
   userId String?
@@ -347,6 +410,7 @@ model StockMovement {
 }
 
 model StockAdjustment {
+  countItem StockCountItem?
   id String @id @default(cuid())
   referenceNumber String @unique
   productId String
@@ -433,6 +497,8 @@ model PurchaseOrder {
   approvedBy User? @relation("OrderApprover", fields: [approvedById], references: [id])
   items PurchaseOrderItem[]
   receipts PurchaseReceipt[]
+  sourcePurchaseRequest PurchaseRequest?
+  sourceQuotation SupplierQuotation?
   @@index([supplierId, status])
   @@index([warehouseId, orderDate])
 }
@@ -465,6 +531,7 @@ model PurchaseReceipt {
   warehouse Warehouse @relation(fields: [warehouseId], references: [id])
   receivedBy User @relation(fields: [receivedById], references: [id])
   items PurchaseReceiptItem[]
+  serialNumbers SerialNumber[]
   @@index([purchaseOrderId, receivedAt])
 }
 
@@ -541,6 +608,7 @@ model MaintenanceRecord {
 }
 
 model Notification {
+  warehouseId String?
   id String @id @default(cuid())
   dedupeKey String? @unique
   userId String
@@ -553,9 +621,12 @@ model Notification {
   createdAt DateTime @default(now())
   user User @relation(fields: [userId], references: [id])
   @@index([userId, isRead, createdAt])
+  @@index([warehouseId])
 }
 
 model ActivityLog {
+  warehouseId String?
+  relatedWarehouseId String?
   id String @id @default(cuid())
   userId String?
   action String
@@ -569,6 +640,8 @@ model ActivityLog {
   user User? @relation(fields: [userId], references: [id])
   @@index([module, action, createdAt])
   @@index([userId, createdAt])
+  @@index([warehouseId, createdAt])
+  @@index([relatedWarehouseId, createdAt])
 }
 
 model SystemSetting {
@@ -581,7 +654,303 @@ model SystemSetting {
   updatedBy User? @relation(fields: [updatedById], references: [id])
 }
 
+model StockCount {
+  id String @id @default(cuid())
+  countNumber String @unique
+  warehouseId String
+  status StockCountStatus @default(DRAFT)
+  createdById String
+  approvedById String?
+  startedAt DateTime?
+  submittedAt DateTime?
+  approvedAt DateTime?
+  notes String? @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id])
+  createdBy User @relation("CountCreator", fields: [createdById], references: [id])
+  approvedBy User? @relation("CountApprover", fields: [approvedById], references: [id])
+  items StockCountItem[]
+  @@index([warehouseId, status, createdAt])
+}
+
+model StockCountItem {
+  id String @id @default(cuid())
+  stockCountId String
+  productId String
+  expectedQuantity Int
+  expectedReservedQuantity Int @default(0)
+  expectedStockUpdatedAt DateTime?
+  countedQuantity Int?
+  variance Int?
+  notes String? @db.Text
+  adjustmentId String? @unique
+  stockCount StockCount @relation(fields: [stockCountId], references: [id])
+  product Product @relation(fields: [productId], references: [id])
+  adjustment StockAdjustment? @relation(fields: [adjustmentId], references: [id])
+  serials StockCountSerial[]
+  @@unique([stockCountId, productId])
+  @@index([productId])
+}
+
+model StockCountSerial {
+  id String @id @default(cuid())
+  stockCountItemId String
+  serialNumber String
+  serialNumberId String?
+  expectedStatus SerialStatus?
+  isExpected Boolean @default(false)
+  isScanned Boolean @default(false)
+  item StockCountItem @relation(fields: [stockCountItemId], references: [id])
+  serial SerialNumber? @relation(fields: [serialNumberId], references: [id])
+  @@unique([stockCountItemId, serialNumber])
+  @@index([serialNumberId])
+}
+
+model InventoryReservation {
+  id String @id @default(cuid())
+  reservationNumber String @unique
+  warehouseId String
+  referenceType String?
+  referenceId String?
+  requestedById String
+  status ReservationStatus @default(ACTIVE)
+  expiresAt DateTime?
+  notes String? @db.Text
+  closedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id])
+  requestedBy User @relation(fields: [requestedById], references: [id])
+  items InventoryReservationItem[]
+  @@index([warehouseId, status, createdAt])
+  @@index([status, expiresAt])
+}
+
+model InventoryReservationItem {
+  id String @id @default(cuid())
+  reservationId String
+  productId String
+  quantity Int
+  fulfilledQuantity Int @default(0)
+  reservation InventoryReservation @relation(fields: [reservationId], references: [id])
+  product Product @relation(fields: [productId], references: [id])
+  serials InventoryReservationSerial[]
+  @@unique([reservationId, productId])
+  @@index([productId])
+}
+
+model InventoryReservationSerial {
+  id String @id @default(cuid())
+  reservationItemId String
+  serialNumberId String
+  fulfilledAt DateTime?
+  item InventoryReservationItem @relation(fields: [reservationItemId], references: [id])
+  serial SerialNumber @relation(fields: [serialNumberId], references: [id])
+  @@unique([reservationItemId, serialNumberId])
+  @@index([serialNumberId])
+}
+
 model Counter {
   key String @id
   value Int @default(0)
+}
+
+model SerialEvent {
+  id String @id @default(cuid())
+  serialNumberId String
+  type String
+  fromStatus SerialStatus?
+  toStatus SerialStatus?
+  warehouseId String?
+  relatedWarehouseId String?
+  referenceType String?
+  referenceId String?
+  referenceNumber String?
+  notes String? @db.Text
+  userId String?
+  occurredAt DateTime @default(now())
+  serial SerialNumber @relation(fields: [serialNumberId], references: [id], onDelete: Restrict)
+  warehouse Warehouse? @relation("SerialEventWarehouse", fields: [warehouseId], references: [id], onDelete: Restrict)
+  relatedWarehouse Warehouse? @relation("SerialEventRelatedWarehouse", fields: [relatedWarehouseId], references: [id], onDelete: Restrict)
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+  @@index([serialNumberId, occurredAt])
+  @@index([warehouseId, occurredAt])
+  @@index([relatedWarehouseId, occurredAt])
+  @@index([referenceType, referenceId])
+}
+
+enum PurchaseRequestStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+  CONVERTED
+  CANCELLED
+}
+
+model PurchaseRequest {
+  id String @id @default(cuid())
+  prNumber String @unique
+  requestedById String
+  department String
+  warehouseId String
+  requiredDate DateTime?
+  justification String @db.Text
+  status PurchaseRequestStatus @default(DRAFT)
+  approvedById String?
+  rejectedById String?
+  approvalNotes String? @db.Text
+  submittedAt DateTime?
+  approvedAt DateTime?
+  rejectedAt DateTime?
+  convertedAt DateTime?
+  purchaseOrderId String? @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  requestedBy User @relation("RequestCreator", fields: [requestedById], references: [id], onDelete: Restrict)
+  approvedBy User? @relation("RequestApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+  rejectedBy User? @relation("RequestRejector", fields: [rejectedById], references: [id], onDelete: SetNull)
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  purchaseOrder PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id], onDelete: Restrict)
+  items PurchaseRequestItem[]
+  rfqs RFQ[]
+  @@index([warehouseId, status, createdAt])
+  @@index([requestedById, createdAt])
+}
+
+model PurchaseRequestItem {
+  id String @id @default(cuid())
+  purchaseRequestId String
+  productId String?
+  description String @db.VarChar(500)
+  quantity Int
+  estimatedUnitCost Decimal @default(0) @db.Decimal(14, 2)
+  notes String? @db.Text
+  request PurchaseRequest @relation(fields: [purchaseRequestId], references: [id], onDelete: Cascade)
+  product Product? @relation(fields: [productId], references: [id], onDelete: Restrict)
+  rfqItems RFQItem[]
+  @@index([purchaseRequestId])
+  @@index([productId])
+}
+
+enum RFQStatus {
+  DRAFT
+  ISSUED
+  CLOSED
+  AWARDED
+  CANCELLED
+}
+
+enum QuotationStatus {
+  DRAFT
+  SUBMITTED
+  ACCEPTED
+  CONVERTED
+  CANCELLED
+}
+
+model RFQ {
+  id String @id @default(cuid())
+  rfqNumber String @unique
+  purchaseRequestId String?
+  warehouseId String
+  createdById String
+  status RFQStatus @default(DRAFT)
+  closingDate DateTime?
+  issuedAt DateTime?
+  closedAt DateTime?
+  notes String? @db.Text
+  selectedQuotationId String? @unique
+  selectedById String?
+  selectedAt DateTime?
+  selectionNotes String? @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  purchaseRequest PurchaseRequest? @relation(fields: [purchaseRequestId], references: [id], onDelete: Restrict)
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  createdBy User @relation("RFQCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  selectedBy User? @relation("RFQAwarder", fields: [selectedById], references: [id], onDelete: SetNull)
+  selectedQuotation SupplierQuotation? @relation("AwardedQuotation", fields: [selectedQuotationId], references: [id], onDelete: Restrict)
+  quotations SupplierQuotation[] @relation("RFQQuotations")
+  suppliers RFQSupplier[]
+  items RFQItem[]
+  @@index([warehouseId, status, createdAt])
+  @@index([purchaseRequestId, status])
+}
+
+model RFQItem {
+  id String @id @default(cuid())
+  rfqId String
+  purchaseRequestItemId String?
+  productId String?
+  description String @db.VarChar(500)
+  quantity Int
+  notes String? @db.Text
+  rfq RFQ @relation(fields: [rfqId], references: [id], onDelete: Cascade)
+  purchaseRequestItem PurchaseRequestItem? @relation(fields: [purchaseRequestItemId], references: [id], onDelete: Restrict)
+  product Product? @relation(fields: [productId], references: [id], onDelete: Restrict)
+  quotationItems SupplierQuotationItem[]
+  @@index([rfqId])
+  @@index([purchaseRequestItemId])
+  @@index([productId])
+}
+
+model RFQSupplier {
+  id String @id @default(cuid())
+  rfqId String
+  supplierId String
+  invitedAt DateTime?
+  respondedAt DateTime?
+  rfq RFQ @relation(fields: [rfqId], references: [id], onDelete: Cascade)
+  supplier Supplier @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  @@unique([rfqId, supplierId])
+  @@index([supplierId])
+}
+
+model SupplierQuotation {
+  id String @id @default(cuid())
+  quotationNumber String @unique
+  supplierReference String?
+  rfqId String
+  supplierId String
+  quotationDate DateTime
+  validUntil DateTime?
+  deliveryDays Int?
+  paymentTerms String?
+  subtotal Decimal @db.Decimal(14,2)
+  tax Decimal @default(0) @db.Decimal(14,2)
+  shipping Decimal @default(0) @db.Decimal(14,2)
+  total Decimal @db.Decimal(14,2)
+  notes String? @db.Text
+  status QuotationStatus @default(DRAFT)
+  purchaseOrderId String? @unique
+  submittedAt DateTime?
+  convertedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  rfq RFQ @relation("RFQQuotations", fields: [rfqId], references: [id], onDelete: Restrict)
+  award RFQ? @relation("AwardedQuotation")
+  supplier Supplier @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  purchaseOrder PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id], onDelete: Restrict)
+  items SupplierQuotationItem[]
+  @@unique([rfqId, supplierId])
+  @@index([status, createdAt])
+}
+
+model SupplierQuotationItem {
+  id String @id @default(cuid())
+  quotationId String
+  rfqItemId String
+  description String @db.VarChar(500)
+  quantity Int
+  unitPrice Decimal @db.Decimal(14,2)
+  subtotal Decimal @db.Decimal(14,2)
+  brandOffered String?
+  modelOffered String?
+  notes String? @db.Text
+  quotation SupplierQuotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  rfqItem RFQItem @relation(fields: [rfqItemId], references: [id], onDelete: Restrict)
+  @@unique([quotationId, rfqItemId])
+  @@index([rfqItemId])
 }

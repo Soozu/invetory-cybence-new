@@ -1,5 +1,9 @@
 import { z } from 'zod'
 
+export const transferScanSchema = z.object({ items: z.array(z.object({
+  id: z.string().min(1), serialNumbers: z.array(z.string().trim().min(1).max(191)).max(10000)
+})).max(100).optional() }).refine(value => !value.items || new Set(value.items.map(item => item.id)).size === value.items.length, { path: ['items'], message: 'Duplicate transfer item.' })
+
 export const transferSchema = z.object({
   sourceWarehouseId: z.string().min(1),
   destinationWarehouseId: z.string().min(1),

@@ -81,6 +81,8 @@ Sign in with `POST /api/auth/login`. Send the returned access token as `Authoriz
 
 The API covers authentication, catalog records, warehouse stock, serials, adjustments, transfers, purchasing and receiving, assets and maintenance, monitoring, dashboard, reports, notifications, activity logs, users, roles, and settings. There is no POS or checkout feature.
 
+Warehouse access is enforced by the backend. Administrators can access every warehouse; other users can access only their `UserWarehouse` assignments. Administrators can manage multiple assignments and a default from **Users → Manage warehouse access**. An unassigned non-administrator has no warehouse access. Catalog metadata remains shared according to module permissions, while stock, orders, assets, reports, and warehouse history are scoped. See [advanced feature progress](docs/advanced-features.md) for migration behavior, transfer action rules, and the next phases.
+
 ## Tests and build
 
 From `backend`:
@@ -88,6 +90,8 @@ From `backend`:
 ```bash
 npm test
 ```
+
+For live warehouse authorization and legacy assignment migration checks, run `npm run test:warehouse-access` from `backend`. It creates and removes a disposable MySQL schema and never resets the configured development database. The local database account needs permission to create and drop those test schemas.
 
 The Vitest suite covers authentication, permissions, stock rules, serialized inventory, purchase receiving, transfers, and asset assignment/return with isolated service fixtures. From the project root, run `npm run build` to verify the frontend bundle. These tests do not replace a live MySQL workflow check after configuring the database.
 

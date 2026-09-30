@@ -1,3 +1,4 @@
+import { serialWhere } from './warehouseAccessService.js'
 import { prisma } from '../config/prisma.js'
 
 export async function ensureWarrantyNotifications(user) {
@@ -7,13 +8,13 @@ export async function ensureWarrantyNotifications(user) {
   const now = new Date()
   const soon = new Date(now.getTime() + 30 * 86_400_000)
   const serials = await prisma.serialNumber.findMany({
-    where: { warrantyEnd: { gte: now, lte: soon }, status: { not: 'DISPOSED' } },
-    include: { product: { select: { name: true } } }
+    where: { warrantyEnd: { gte: now, lte: soon }, status: { not: 'DISPOSED' }, ...serialWhere(user) },
+    include: { product: { select: { name: true } }, asset: { select: { warehouseId: true } } }
   })
   for (const serial of serials) {
     const dedupeKey = `warranty:${user.id}:${serial.id}`
     await prisma.notification.upsert({ where: { dedupeKey }, update: {}, create: {
-      dedupeKey, userId: user.id, type: 'WARRANTY_EXPIRING', title: 'Warranty expiring soon',
+      dedupeKey, userId: user.id, warehouseId: serial.warehouseId || serial.asset?.warehouseId || null, type: 'WARRANTY_EXPIRING', title: 'Warranty expiring soon',
       message: `${serial.product.name} (${serial.serialNumber}) warranty ends on ${serial.warrantyEnd.toISOString().slice(0, 10)}.`,
       referenceType: 'SerialNumber', referenceId: serial.id
     } })

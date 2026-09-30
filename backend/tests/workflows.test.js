@@ -18,7 +18,7 @@ import { transitionTransfer } from '../src/services/transferService.js'
 import { assignAsset, returnAsset } from '../src/services/assetService.js'
 import { createProduct } from '../src/services/catalogService.js'
 
-const req = { user: { id: 'user-1' } }
+const req = { user: { id: 'user-1', role: 'Administrator' } }
 
 function orderFixture({ received = 0, serialized = false } = {}) {
   const line = { id: 'line-1', productId: 'product-1', quantity: 10, receivedQuantity: received,
@@ -29,7 +29,8 @@ function orderFixture({ received = 0, serialized = false } = {}) {
     purchaseOrderItem: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
     purchaseReceipt: { create: vi.fn().mockResolvedValue({ id: 'receipt-1' }) },
     purchaseReceiptItem: { create: vi.fn().mockResolvedValue({}) },
-    serialNumber: { count: vi.fn().mockResolvedValue(0), createMany: vi.fn().mockResolvedValue({ count: 2 }) },
+    serialNumber: { count: vi.fn().mockResolvedValue(0), createMany: vi.fn().mockResolvedValue({ count: 2 }), findMany: vi.fn().mockResolvedValue([{ id: 'serial-a' }, { id: 'serial-b' }]) },
+    serialEvent: { createMany: vi.fn().mockResolvedValue({ count: 2 }) },
     notification: { create: vi.fn().mockResolvedValue({}) }
   }
   mocked.tx = tx
@@ -102,7 +103,8 @@ describe('procurement, transfer, and asset workflows', () => {
         findFirst: vi.fn().mockResolvedValue({ id: 'assignment-1', status: 'ACTIVE' }),
         update: vi.fn().mockResolvedValue({})
       },
-      serialNumber: { update: vi.fn().mockResolvedValue({}) }
+      serialNumber: { update: vi.fn().mockResolvedValue({}) },
+      serialEvent: { createMany: vi.fn().mockResolvedValue({ count: 1 }) }
     }
     mocked.tx = tx
     await assignAsset('asset-1', { assignedTo: 'Alex Rivera', department: 'IT' }, req)

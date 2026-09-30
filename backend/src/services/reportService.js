@@ -1,3 +1,4 @@
+import { warehouseWhere, getAccessibleWarehouseIds } from './warehouseAccessService.js'
 import { prisma } from '../config/prisma.js'
 import { stockAlerts, warrantyRecords } from './monitoringService.js'
 import { HttpError } from '../utils/http.js'
@@ -12,28 +13,29 @@ const productWhere = query => ({
   ...(query.supplier ? { defaultSupplierId: query.supplier } : {})
 })
 
-export async function report(kind, query) {
+export async function report(kind, query, user) {
   const product = productWhere(query)
   const warehouseId = query.warehouse
+  const scope = warehouseWhere(user, warehouseId)
   switch (kind) {
     case 'inventory-summary': return (await prisma.product.findMany({
-      where: product,
-      include: { category: true, brand: true, defaultSupplier: true, stocks: { include: { warehouse: true }, ...(warehouseId ? { where: { warehouseId } } : {}) } },
+      where: { ...product, ...(getAccessibleWarehouseIds(user) === null && !warehouseId ? {} : { stocks: { some: scope } }) },
+      include: { category: true, brand: true, defaultSupplier: true, stocks: { include: { warehouse: true }, where: scope } },
       orderBy: { name: 'asc' }, take: 5000
     })).filter(item => !warehouseId || item.stocks.length).map(item => ({
       ...item, quantity: item.stocks.reduce((sum, stock) => sum + stock.quantity, 0),
       purchaseCost: Number(item.purchaseCost)
     }))
     case 'stock-movement': return prisma.stockMovement.findMany({ where: {
-      ...(warehouseId ? { warehouseId } : {}),
+      ...scope,
       ...(dateFilter(query) ? { createdAt: dateFilter(query) } : {}),
       ...(Object.keys(product).length ? { product } : {})
     }, include: { product: true, warehouse: true, user: { select: { firstName: true, lastName: true } } }, orderBy: { createdAt: 'desc' }, take: 5000 })
-    case 'low-stock': return (await stockAlerts('low')).filter(item => matches(item, query))
-    case 'out-of-stock': return (await stockAlerts('out')).filter(item => matches(item, query))
+    case 'low-stock': return (await stockAlerts('low', user, warehouseId)).filter(item => matches(item, query))
+    case 'out-of-stock': return (await stockAlerts('out', user, warehouseId)).filter(item => matches(item, query))
     case 'inventory-valuation':
     case 'warehouse-stock': return (await prisma.warehouseStock.findMany({ where: {
-      ...(warehouseId ? { warehouseId } : {}),
+      ...scope,
       ...(Object.keys(product).length ? { product } : {})
     }, include: { product: { include: { category: true, brand: true } }, warehouse: true } })).map(stock => ({
       ...stock, availableQuantity: stock.quantity - stock.reservedQuantity,
@@ -41,14 +43,14 @@ export async function report(kind, query) {
     }))
     case 'supplier-purchases': return prisma.purchaseOrder.findMany({ where: {
       ...(query.supplier ? { supplierId: query.supplier } : {}),
-      ...(warehouseId ? { warehouseId } : {}),
+      ...scope,
       ...(dateFilter(query) ? { orderDate: dateFilter(query) } : {})
     }, include: { supplier: true, warehouse: true, items: true }, orderBy: { orderDate: 'desc' }, take: 5000 })
     case 'assets': return prisma.asset.findMany({ where: {
-      ...(warehouseId ? { warehouseId } : {}),
+      ...scope,
       ...(Object.keys(product).length ? { product } : {})
     }, include: { product: true, serialNumber: true, assignments: true }, take: 5000 })
-    case 'warranties': return (await warrantyRecords(query.status)).filter(item => matches({ ...item, category: item.product.categoryId, brand: item.product.brandId }, query))
+    case 'warranties': return (await warrantyRecords(query.status, user)).filter(item => matches({ ...item, category: item.product.categoryId, brand: item.product.brandId }, query))
     default: throw new HttpError(404, 'Report not found.')
   }
 }

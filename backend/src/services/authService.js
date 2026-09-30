@@ -6,7 +6,7 @@ import { env } from '../config/env.js'
 import { HttpError } from '../utils/http.js'
 import { publicUser } from '../middleware/auth.js'
 
-const userInclude = { role: { include: { permissions: { include: { permission: true } } } } }
+const userInclude = { role: { include: { permissions: { include: { permission: true } } } }, warehouseAssignments: true }
 const refreshHash = token => crypto.createHash('sha256').update(token).digest('hex')
 const refreshCookie = { httpOnly: true, secure: env.cookieSecure, sameSite: 'lax', path: '/api/auth' }
 

@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useState } from 'react'
 import { apiRequest, assetUrl } from '../lib/api.js'
+import * as usersApi from '../services/userService.js'
 import * as auth from '../services/authService.js'
 import * as productsApi from '../services/productService.js'
 import * as inventoryApi from '../services/inventoryService.js'
@@ -8,7 +9,7 @@ import * as assetsApi from '../services/assetService.js'
 
 const InventoryContext = createContext(null)
 const empty = {
-  products: [], stockLocations: {}, categories: [], brands: [], warehouses: [], suppliers: [],
+  products: [], stockLocations: {}, stockBalances: {}, transferDestinations: [], defaultWarehouseId: null, categories: [], brands: [], warehouses: [], suppliers: [],
   orders: [], transfers: [], movements: [], serials: [], assets: [], maintenance: [],
   users: [], roles: [], permissionCatalog: [], logs: [], notifications: [], permissions: {},
   settings: {}, dashboardSummary: null
@@ -27,11 +28,13 @@ export function InventoryProvider({ children }) {
   const [authState, setAuthState] = useState('loading')
   const [authError, setAuthError] = useState('')
   const [toast, setToast] = useState(null)
+  const [pendingOperations, setPendingOperations] = useState(0)
   const notify = useCallback((message, kind = 'success') => setToast({ id: Date.now(), message, kind }), [])
   const refreshData = useCallback(async () => {
     const response = await apiRequest('/bootstrap')
+    const transferDestinations = response.data.transferDestinations || []
     setData({
-      ...empty, ...response.data,
+      ...empty, ...response.data, transferDestinations,
       products: response.data.products.map(product => ({ ...product, image: assetUrl(product.image) }))
     })
     return response.data
@@ -77,6 +80,7 @@ export function InventoryProvider({ children }) {
     finally { setUser(null); setData(empty); setAuthError(''); setAuthState('unauthenticated') }
   }
   const run = async (operation, success) => {
+    setPendingOperations(count => count + 1)
     try {
       const result = await operation()
       await refreshData()
@@ -85,6 +89,8 @@ export function InventoryProvider({ children }) {
     } catch (error) {
       notify(messageOf(error), 'error')
       return null
+    } finally {
+      setPendingOperations(count => Math.max(0, count - 1))
     }
   }
   const productPayload = async product => ({
@@ -143,7 +149,7 @@ export function InventoryProvider({ children }) {
   const createTransfer = form => run(async () => {
     const response = await inventoryApi.createTransfer({
       sourceWarehouseId: requiredId(data.warehouses, form.from, 'source warehouse'),
-      destinationWarehouseId: requiredId(data.warehouses, form.to, 'destination warehouse'),
+      destinationWarehouseId: requiredId(data.transferDestinations, form.to, 'destination warehouse'),
       notes: form.notes || null,
       items: [{ productId: form.productId, quantity: Number(form.quantity) }]
     })
@@ -230,19 +236,27 @@ export function InventoryProvider({ children }) {
   const saveSettings = settings => run(() => apiRequest('/settings', { method: 'PUT', body: {
     companyName: settings.company || '', companyLogo: settings.logo || '',
     email: settings.email || '', phone: settings.phone || '', address: settings.address || '',
-    currency: 'PHP', defaultWarehouseId: requiredId(data.warehouses, settings.defaultWarehouse, 'default warehouse'),
+    currency: 'PHP',
+    ...(data.warehouses.some(warehouse => warehouse.name === settings.defaultWarehouse)
+      ? { defaultWarehouseId: data.warehouses.find(warehouse => warehouse.name === settings.defaultWarehouse).id }
+      : {}),
     lowStockNotifications: Boolean(settings.lowStockAlerts), warrantyNotifications: Boolean(settings.warrantyAlerts),
     weeklySummary: Boolean(settings.weeklySummary), defaultMinimumStock: Number(settings.defaultMinStock) || 0
   } }), 'Settings saved.')
   const addUser = account => run(() => {
     const [firstName, ...rest] = account.name.trim().split(/\s+/)
-    return apiRequest('/users', { method: 'POST', body: {
+    return usersApi.createUser({
       firstName, lastName: rest.join(' ') || firstName, email: account.email,
       password: account.password,
       roleId: data.roles.find(role => role.name === account.role)?.id,
-      warehouseId: account.warehouse === 'All locations' ? null : requiredId(data.warehouses, account.warehouse, 'warehouse')
-    } })
+      warehouseIds: account.warehouseIds || [], defaultWarehouseId: account.defaultWarehouseId || null
+    })
   }, 'User added.')
+  const setUserWarehouses = (id, value) => run(async () => {
+    const response = await usersApi.updateWarehouseAssignments(id, { warehouseIds: value.warehouseIds, defaultWarehouseId: value.defaultWarehouseId || null })
+    if (id === user?.id) setUser(current => ({ ...current, ...response.data }))
+    return response
+  }, 'Warehouse access saved.')
   const toggleUser = id => run(() => apiRequest(`/users/${id}/change-status`, { method: 'POST', body: {
     status: data.users.find(user => user.id === id)?.status === 'Active' ? 'INACTIVE' : 'ACTIVE'
   } }), 'User status updated.')
@@ -257,11 +271,11 @@ export function InventoryProvider({ children }) {
   }, 'Permissions saved.')
 
   return <InventoryContext.Provider value={{
-    ...data, user, authState, authError, retryConnection: restore, login, logout, refreshData, notify, toast,
+    ...data, user, authState, authError, isMutating: pendingOperations > 0, retryConnection: restore, login, logout, refreshData, notify, toast,
     saveProduct, importProducts, archiveProduct, adjustStock, createTransfer, transferAction,
     addSupplier, addCategory, addBrand, toggleCategory, toggleBrand, addWarehouse, createOrder, orderAction,
     receiveOrder, addAsset, assignAsset, returnAsset, addMaintenance, setMaintenanceStatus,
-    setSerialStatus, markNotification, saveSettings, addUser, toggleUser, setPermission
+    setSerialStatus, markNotification, saveSettings, addUser, setUserWarehouses, toggleUser, setPermission
   }}>{children}</InventoryContext.Provider>
 }
 

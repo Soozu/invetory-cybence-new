@@ -1,6 +1,7 @@
+import { warehouseWhere, transferWhere, serialWhere, activityWhere } from './warehouseAccessService.js'
 import { prisma } from '../config/prisma.js'
 import { summary } from './dashboardService.js'
-import { readSettings } from './managementService.js'
+import { readSettings, userScope } from './managementService.js'
 import { ensureWarrantyNotifications } from './notificationService.js'
 
 const day = value => value ? value.toISOString().slice(0, 10) : ''
@@ -10,28 +11,30 @@ const productKind = category => ({ Components: 'gpu', Storage: 'storage', Networ
 
 export async function bootstrap(user) {
   const can = module => user.role === 'Administrator' || user.permissions.includes(`${module}.VIEW`)
-  const productAccess = ['products', 'inventory', 'warehouses', 'purchasing', 'assets', 'dashboard', 'reports'].some(can)
+  const productAccess = ['products', 'inventory', 'stock_counts', 'reservations', 'purchase_requests', 'rfqs', 'warehouses', 'purchasing', 'assets', 'dashboard', 'reports'].some(can)
+  const transferDestinations = user.role === 'Administrator' || user.permissions.includes('inventory.CREATE')
+    ? await prisma.warehouse.findMany({ where: { status: 'ACTIVE' }, select: { id: true, name: true, code: true }, orderBy: { name: 'asc' } }) : []
   await ensureWarrantyNotifications(user)
   const [productRows, categoryRows, brandRows, warehouseRows, supplierRows, orderRows, transferRows,
     movementRows, serialRows, assetRows, maintenanceRows, userRows, logRows, notificationRows,
     roleRows, permissionRows, settings, dashboardSummary] = await Promise.all([
-    prisma.product.findMany({ include: { category: true, brand: true, defaultSupplier: true, stocks: { include: { warehouse: true } } }, orderBy: { createdAt: 'desc' } }),
+    prisma.product.findMany({ include: { category: true, brand: true, defaultSupplier: true, stocks: { where: warehouseWhere(user), include: { warehouse: true } } }, orderBy: { createdAt: 'desc' } }),
     prisma.category.findMany({ include: { children: true }, orderBy: { name: 'asc' } }),
     prisma.brand.findMany({ orderBy: { name: 'asc' } }),
-    prisma.warehouse.findMany({ include: { manager: true, stock: { include: { product: true } } }, orderBy: { name: 'asc' } }),
-    prisma.supplier.findMany({ include: { _count: { select: { products: true, purchaseOrders: true } } }, orderBy: { companyName: 'asc' } }),
-    prisma.purchaseOrder.findMany({ include: { supplier: true, warehouse: true, createdBy: true, items: true }, orderBy: { createdAt: 'desc' } }),
-    prisma.stockTransfer.findMany({ include: { sourceWarehouse: true, destinationWarehouse: true, requestedBy: true, items: true }, orderBy: { createdAt: 'desc' } }),
-    prisma.stockMovement.findMany({ include: { sourceWarehouse: true, destinationWarehouse: true, warehouse: true, user: true }, orderBy: { createdAt: 'desc' }, take: 500 }),
-    prisma.serialNumber.findMany({ include: { warehouse: true, supplier: true, purchaseOrderItem: { include: { purchaseOrder: true } }, asset: { include: { assignments: { where: { status: 'ACTIVE' } } } } }, orderBy: { createdAt: 'desc' } }),
-    prisma.asset.findMany({ include: { product: true, serialNumber: true, assignments: { orderBy: { createdAt: 'desc' } } }, orderBy: { createdAt: 'desc' } }),
-    prisma.maintenanceRecord.findMany({ include: { asset: { include: { serialNumber: true } } }, orderBy: { createdAt: 'desc' } }),
-    prisma.user.findMany({ include: { role: true, warehouse: true }, orderBy: { createdAt: 'desc' } }),
-    prisma.activityLog.findMany({ include: { user: true }, orderBy: { createdAt: 'desc' }, take: 500 }),
-    prisma.notification.findMany({ where: { userId: user.id }, orderBy: { createdAt: 'desc' }, take: 100 }),
+    prisma.warehouse.findMany({ where: warehouseWhere(user, undefined, 'id'), include: { manager: true, stock: { include: { product: true } } }, orderBy: { name: 'asc' } }),
+    prisma.supplier.findMany({ include: { _count: { select: { products: true, purchaseOrders: { where: warehouseWhere(user) } } } }, orderBy: { companyName: 'asc' } }),
+    prisma.purchaseOrder.findMany({ where: warehouseWhere(user), include: { supplier: true, warehouse: true, createdBy: true, items: true }, orderBy: { createdAt: 'desc' } }),
+    prisma.stockTransfer.findMany({ where: transferWhere(user), include: { sourceWarehouse: true, destinationWarehouse: true, requestedBy: true, items: true }, orderBy: { createdAt: 'desc' } }),
+    prisma.stockMovement.findMany({ where: warehouseWhere(user), include: { sourceWarehouse: true, destinationWarehouse: true, warehouse: true, user: true }, orderBy: { createdAt: 'desc' }, take: 500 }),
+    prisma.serialNumber.findMany({ where: serialWhere(user), include: { warehouse: true, supplier: true, purchaseOrderItem: { include: { purchaseOrder: true } }, asset: { include: { assignments: { where: { status: 'ACTIVE' } } } } }, orderBy: { createdAt: 'desc' } }),
+    prisma.asset.findMany({ where: warehouseWhere(user), include: { product: true, serialNumber: true, assignments: { orderBy: { createdAt: 'desc' } } }, orderBy: { createdAt: 'desc' } }),
+    prisma.maintenanceRecord.findMany({ where: { asset: warehouseWhere(user) }, include: { asset: { include: { serialNumber: true } } }, orderBy: { createdAt: 'desc' } }),
+    prisma.user.findMany({ where: userScope(user), include: { role: true, warehouse: true, warehouseAssignments: { include: { warehouse: { select: { id: true, name: true } } } } }, orderBy: { createdAt: 'desc' } }),
+    prisma.activityLog.findMany({ where: activityWhere(user), include: { user: true }, orderBy: { createdAt: 'desc' }, take: 500 }),
+    prisma.notification.findMany({ where: { userId: user.id, ...warehouseWhere(user) }, orderBy: { createdAt: 'desc' }, take: 100 }),
     prisma.role.findMany({ include: { permissions: { include: { permission: true } } } }),
     prisma.permission.findMany(),
-    readSettings(), summary()
+    readSettings(), summary(user)
   ])
   const products = productRows.map(row => {
     const stock = row.stocks.reduce((sum, item) => sum + item.quantity, 0)
@@ -40,7 +43,7 @@ export async function bootstrap(user) {
     return {
       id: row.id, name: row.name, sku: row.sku, barcode: row.barcode || '',
       category: row.category.name, brand: row.brand.name, model: row.model || '',
-      stock, reserved, min: row.minimumStock, max: row.maximumStock,
+      stock, reserved, inWarehouseScope: row.stocks.length > 0, min: row.minimumStock, max: row.maximumStock,
       reorder: row.reorderPoint, cost: Number(row.purchaseCost),
       warehouse: primary?.warehouse.name || '', supplier: row.defaultSupplier?.companyName || '',
       warranty: row.warrantyMonths ? `${row.warrantyMonths} Months` : 'No warranty',
@@ -50,6 +53,7 @@ export async function bootstrap(user) {
     }
   })
   const stockLocations = Object.fromEntries(productRows.map(row => [row.id, Object.fromEntries(row.stocks.map(stock => [stock.warehouse.name, stock.quantity]))]))
+  const stockBalances = Object.fromEntries(productRows.map(row => [row.id, row.stocks.map(stock => ({ warehouseId: stock.warehouseId, warehouse: stock.warehouse.name, quantity: stock.quantity, reservedQuantity: stock.reservedQuantity, availableQuantity: stock.quantity - stock.reservedQuantity }))]))
   const categories = categoryRows.map(row => ({
     id: row.id, name: row.name, parent: categoryRows.find(parent => parent.id === row.parentId)?.name || '',
     description: row.description || (row.parentId ? `Subcategory of ${categoryRows.find(parent => parent.id === row.parentId)?.name || 'another category'}` : ''),
@@ -86,7 +90,7 @@ export async function bootstrap(user) {
     lines: row.items.map(item => ({ id: item.id, productId: item.productId, quantity: item.quantity, received: item.receivedQuantity, cost: Number(item.unitCost) }))
   }))
   const transfers = transferRows.map(row => ({
-    id: row.id, number: row.transferNumber, from: row.sourceWarehouse.name,
+    id: row.id, number: row.transferNumber, sourceWarehouseId: row.sourceWarehouseId, destinationWarehouseId: row.destinationWarehouseId, from: row.sourceWarehouse.name,
     to: row.destinationWarehouse.name, items: row.items.length,
     productId: row.items[0]?.productId, quantity: row.items[0]?.quantity || 0,
     requestedBy: `${row.requestedBy.firstName} ${row.requestedBy.lastName}`,
@@ -124,7 +128,8 @@ export async function bootstrap(user) {
   }))
   const users = userRows.map(row => ({
     id: row.id, name: `${row.firstName} ${row.lastName}`, email: row.email,
-    role: row.role.name, warehouse: row.warehouse?.name || 'All locations',
+    role: row.role.name, warehouseIds: row.warehouseAssignments.map(item => item.warehouseId), defaultWarehouseId: row.warehouseAssignments.find(item => item.isDefault)?.warehouseId || '',
+    warehouse: row.role.name === 'Administrator' ? 'All warehouses' : row.warehouseAssignments.map(item => item.warehouse.name).join(', ') || 'No warehouse access',
     status: label(row.status), lastLogin: row.lastLoginAt ? dateTime(row.lastLoginAt) : 'Never',
     initials: `${row.firstName[0]}${row.lastName[0]}`.toUpperCase()
   }))
@@ -147,10 +152,10 @@ export async function bootstrap(user) {
     }, new Map())
   )]))
   return {
-    products: productAccess ? products : [], stockLocations: productAccess ? stockLocations : {},
+    products: productAccess ? products : [], stockLocations: productAccess ? stockLocations : {}, stockBalances: productAccess ? stockBalances : {},
     categories: can('categories') || productAccess ? categories : [], brands: can('brands') || productAccess ? brands : [],
     warehouses: can('warehouses') || productAccess ? warehouses : [],
-    suppliers: can('suppliers') || can('purchasing') || can('reports') ? suppliers : [],
+    suppliers: can('rfqs') || can('suppliers') || can('purchasing') || can('reports') ? suppliers : [],
     orders: can('purchasing') || can('reports') ? orders : [],
     transfers: can('inventory') ? transfers : [], movements: can('inventory') || can('dashboard') || can('reports') ? movements : [],
     serials: can('inventory') || can('assets') || can('reports') ? serials : [],
@@ -159,15 +164,16 @@ export async function bootstrap(user) {
     permissions: can('users') ? permissions : {},
     roles: can('users') ? roleRows.map(role => ({ id: role.id, name: role.name, permissionIds: role.permissions.map(item => item.permissionId) })) : [],
     permissionCatalog: can('users') ? permissionRows.map(permission => ({ id: permission.id, module: permission.module, action: permission.action })) : [],
-    settings: {
+    settings: can('settings') ? {
       company: settings.companyName || 'TechStock Inventory', logo: settings.companyLogo || '',
       address: settings.address || '', phone: settings.phone || '', email: settings.email || '',
-      currency: 'PHP ₱', defaultWarehouse: warehouses.find(row => row.id === settings.defaultWarehouseId)?.name || 'Main Warehouse',
+      currency: 'PHP ₱', defaultWarehouse: warehouses.find(row => row.id === settings.defaultWarehouseId)?.name || '',
       lowStockAlerts: settings.lowStockNotifications ?? true,
       warrantyAlerts: settings.warrantyNotifications ?? true,
       weeklySummary: settings.weeklySummary ?? false,
       defaultMinStock: settings.defaultMinimumStock ?? 10
-    },
+    } : {},
+    transferDestinations, defaultWarehouseId: user.defaultWarehouseId,
     dashboardSummary: can('dashboard') ? dashboardSummary : null
   }
 }

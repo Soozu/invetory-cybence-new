@@ -1,4 +1,5 @@
 export const peso = value => new Intl.NumberFormat('en-PH',{style:'currency',currency:'PHP',maximumFractionDigits:0}).format(Number(value)||0)
+export const pesoAmount = value => new Intl.NumberFormat('en-PH',{style:'currency',currency:'PHP',minimumFractionDigits:2,maximumFractionDigits:2}).format(Number(value)||0)
 export const number = value => new Intl.NumberFormat('en-PH').format(Number(value)||0)
 export const shortDate = value => value ? new Date(value).toLocaleDateString('en-PH',{month:'short',day:'numeric',year:'numeric'}) : '—'
 export const productStatus = product => product.inactive ? 'Inactive' : product.stock-product.reserved<=0 ? 'Out of Stock' : product.stock-product.reserved<=(product.reorder||product.min) ? 'Low Stock' : 'In Stock'

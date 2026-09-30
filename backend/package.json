@@ -7,6 +7,8 @@
     "dev": "nodemon server.js",
     "start": "node server.js",
     "test": "vitest run",
+    "test:warehouse-access": "node scripts/testWarehouseAccess.mjs",
+    "test:integration": "node scripts/testWarehouseAccess.mjs",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:seed": "prisma db seed",

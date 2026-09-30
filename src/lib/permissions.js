@@ -1,5 +1,6 @@
 export function can(user, permission) {
   if (!user) return false
+  if (Array.isArray(permission)) return permission.some(key => can(user, key))
   return user.role === 'Administrator' || user.permissions?.includes(permission)
 }
 
@@ -10,8 +11,18 @@ export function routePermission(path) {
   if (path.startsWith('/products')) return 'products.VIEW'
   if (path.startsWith('/categories')) return 'categories.VIEW'
   if (path.startsWith('/brands')) return 'brands.VIEW'
+  if (path.startsWith('/inventory/stock-counts')) return 'stock_counts.VIEW'
+  if (path.startsWith('/inventory/scanner') || path.startsWith('/inventory/labels')) return ['products.VIEW', 'inventory.VIEW', 'stock_counts.VIEW', 'reservations.VIEW', 'assets.VIEW', 'warehouses.VIEW', 'purchasing.VIEW']
+  if (path.startsWith('/inventory/reservations')) return 'reservations.VIEW'
+  if (path.startsWith('/serial-numbers')) return 'inventory.VIEW'
   if (path.startsWith('/inventory') || path.startsWith('/monitoring/low-stock') || path.startsWith('/monitoring/out-of-stock') || path.startsWith('/monitoring/stock-movement')) return 'inventory.VIEW'
   if (path.startsWith('/warehouses')) return 'warehouses.VIEW'
+  if (path === '/procurement/purchase-requests/new') return 'purchase_requests.CREATE'
+  if (/^\/procurement\/purchase-requests\/[^/]+\/edit$/.test(path)) return 'purchase_requests.EDIT'
+  if (path.startsWith('/procurement/purchase-requests')) return 'purchase_requests.VIEW'
+  if (path === '/procurement/rfqs/new') return 'rfqs.CREATE'
+  if (/^\/procurement\/rfqs\/[^/]+\/edit$/.test(path) || /\/quotations\/(new|[^/]+\/edit)$/.test(path)) return 'rfqs.EDIT'
+  if (path.startsWith('/procurement/rfqs')) return 'rfqs.VIEW'
   if (path.startsWith('/procurement/suppliers')) return 'suppliers.VIEW'
   if (path === '/procurement/purchase-orders/new') return 'purchasing.CREATE'
   if (path.startsWith('/procurement')) return 'purchasing.VIEW'

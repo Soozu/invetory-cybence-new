@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { authenticate, authorize } from '../middleware/auth.js'
 import { validate } from '../middleware/validate.js'
-import { userSchema, userUpdateSchema, userStatusSchema, resetPasswordSchema, roleSchema, permissionSetSchema, settingsSchema } from '../validators/management.js'
+import { userSchema, userUpdateSchema, warehouseAssignmentsSchema, userStatusSchema, resetPasswordSchema, roleSchema, permissionSetSchema, settingsSchema } from '../validators/management.js'
 import * as controller from '../controllers/managementController.js'
 
 export const managementRoutes = Router()
@@ -10,6 +10,7 @@ managementRoutes.get('/users', authorize('users', 'VIEW'), controller.users.list
 managementRoutes.get('/users/:id', authorize('users', 'VIEW'), controller.users.get)
 managementRoutes.post('/users', authorize('users', 'CREATE'), validate(userSchema), controller.users.create)
 managementRoutes.put('/users/:id', authorize('users', 'EDIT'), validate(userUpdateSchema), controller.users.update)
+managementRoutes.put('/users/:id/warehouses', authorize('users', 'EDIT'), validate(warehouseAssignmentsSchema), controller.users.update)
 managementRoutes.post('/users/:id/change-status', authorize('users', 'EDIT'), validate(userStatusSchema), controller.users.status)
 managementRoutes.post('/users/:id/reset-password', authorize('users', 'EDIT'), validate(resetPasswordSchema), controller.users.password)
 managementRoutes.get('/roles', authorize('users', 'VIEW'), controller.roles.list)
