@@ -47,7 +47,7 @@ export async function updateQuotation(rfqId, id, input, req) {
     await tx.supplierQuotationItem.deleteMany({ where: { quotationId: id } })
     const updated = await tx.supplierQuotation.update({ where: { id }, data: { ...values, updatedAt: nextDocumentVersion(row) }, include })
     await tx.rFQ.update({ where: { id: rfqId }, data: { updatedAt: nextDocumentVersion(rfq) } })
-    await audit(tx, req, 'UPDATED', 'Quotations', 'SupplierQuotation', id, `Updated draft ${row.quotationNumber}.`, { warehouseId: rfq.warehouseId })
+    await audit(tx, req, 'UPDATED', 'Quotations', 'SupplierQuotation', id, `Updated draft ${row.quotationNumber}.`, { warehouseId: rfq.warehouseId,before:row,after:updated })
     return updated
   })
 }
@@ -61,7 +61,7 @@ export async function transitionQuotation(rfqId, id, action, input, req) {
     if (changed.count !== 1) throw new HttpError(409, 'Quotation changed concurrently.')
     if (action === 'submit') await tx.rFQSupplier.update({ where: { rfqId_supplierId: { rfqId, supplierId: row.supplierId } }, data: { respondedAt: new Date() } })
     await tx.rFQ.update({ where: { id: rfqId }, data: { updatedAt: nextDocumentVersion(rfq) } })
-    await audit(tx, req, action.toUpperCase(), 'Quotations', 'SupplierQuotation', id, `${action} ${row.quotationNumber}.`, { warehouseId: rfq.warehouseId })
+    await audit(tx, req, action.toUpperCase(), 'Quotations', 'SupplierQuotation', id, `${action} ${row.quotationNumber}.`, { warehouseId: rfq.warehouseId,before:row,after:await tx.supplierQuotation.findUnique({where:{id}}) })
     return tx.supplierQuotation.findUnique({ where: { id }, include })
   })
 }
@@ -89,7 +89,7 @@ export async function convertQuotation(rfqId, id, input, req) {
       await audit(tx, req, 'CONVERTED', 'Purchase Requests', 'PurchaseRequest', request.id, `Converted ${request.prNumber} through ${rfq.rfqNumber} and ${row.quotationNumber} to draft ${order.poNumber}.`, { warehouseId: rfq.warehouseId })
     }
     await tx.rFQ.update({ where: { id: rfqId }, data: { updatedAt: nextDocumentVersion(rfq) } })
-    await audit(tx, req, 'CONVERTED', 'Quotations', 'SupplierQuotation', id, `Converted awarded ${row.quotationNumber} to draft ${order.poNumber}.`, { warehouseId: rfq.warehouseId })
+    await audit(tx, req, 'CONVERTED', 'Quotations', 'SupplierQuotation', id, `Converted awarded ${row.quotationNumber} to draft ${order.poNumber}.`, { warehouseId: rfq.warehouseId,before:row,after:await tx.supplierQuotation.findUnique({where:{id}}) })
     return { quotation: await tx.supplierQuotation.findUnique({ where: { id }, include }), purchaseOrder: order }
   })
 }

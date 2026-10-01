@@ -88,7 +88,7 @@ export async function startCount(id, req) {
         serials: { create: product.serialNumbers.map(serial => ({ serialNumber: serial.serialNumber, serialNumberId: serial.id, isExpected: true, expectedStatus: serial.status })) }
       } })
     }
-    await audit(tx, req, 'STARTED', 'Stock Counts', 'StockCount', id, `Captured inventory snapshot for ${count.countNumber}.`, { warehouseId: count.warehouseId })
+    await audit(tx, req, 'STARTED', 'Stock Counts', 'StockCount', id, `Captured inventory snapshot for ${count.countNumber}.`, { warehouseId: count.warehouseId,before:count,after:await tx.stockCount.findUnique({where:{id}}) })
     return tx.stockCount.findUnique({ where: { id }, include })
   })
 }
@@ -128,7 +128,7 @@ export async function submitCount(id, req) {
     if (await tx.stockCountItem.count({ where: { stockCountId: id, countedQuantity: null } })) throw new HttpError(400, 'Count every line before submitting. Enter zero for items not found.')
     const changed = await tx.stockCount.updateMany({ where: { id, status: 'IN_PROGRESS' }, data: { status: 'SUBMITTED', submittedAt: new Date() } })
     if (changed.count !== 1) throw new HttpError(409, 'Count changed concurrently.')
-    await audit(tx, req, 'SUBMITTED', 'Stock Counts', 'StockCount', id, `Submitted ${count.countNumber} for approval.`, { warehouseId: count.warehouseId })
+    await audit(tx, req, 'SUBMITTED', 'Stock Counts', 'StockCount', id, `Submitted ${count.countNumber} for approval.`, { warehouseId: count.warehouseId,before:count,after:await tx.stockCount.findUnique({where:{id}}) })
     return { id, status: 'SUBMITTED' }
   })
 }
@@ -184,7 +184,7 @@ export async function approveCount(id, req) {
         await tx.stockCountItem.update({ where: { id: item.id }, data: { adjustmentId: adjustment.id } })
       }
     }
-    await audit(tx, req, 'APPROVED', 'Stock Counts', 'StockCount', id, `Approved ${count.countNumber} and reconciled inventory variances.`, { warehouseId: count.warehouseId })
+    await audit(tx, req, 'APPROVED', 'Stock Counts', 'StockCount', id, `Approved ${count.countNumber} and reconciled inventory variances.`, { warehouseId: count.warehouseId,before:count,after:await tx.stockCount.findUnique({where:{id}}) })
     return { id, status: 'APPROVED' }
   })
 }
@@ -195,7 +195,7 @@ export async function cancelCount(id, req) {
     if (['APPROVED', 'CANCELLED'].includes(count.status)) throw new HttpError(409, 'This stock count is already closed.')
     const changed = await tx.stockCount.updateMany({ where: { id, status: count.status }, data: { status: 'CANCELLED' } })
     if (changed.count !== 1) throw new HttpError(409, 'Count changed concurrently.')
-    await audit(tx, req, 'CANCELLED', 'Stock Counts', 'StockCount', id, `Cancelled ${count.countNumber}.`, { warehouseId: count.warehouseId })
+    await audit(tx, req, 'CANCELLED', 'Stock Counts', 'StockCount', id, `Cancelled ${count.countNumber}.`, { warehouseId: count.warehouseId,before:count,after:await tx.stockCount.findUnique({where:{id}}) })
     return { id, status: 'CANCELLED' }
   })
 }

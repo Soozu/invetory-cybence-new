@@ -1,3 +1,4 @@
+import { notificationWriter } from './notificationDelivery.js'
 import { transferWhere, requireTransferAccess, requireWarehouseAccess } from './warehouseAccessService.js'
 import { prisma } from '../config/prisma.js'
 import { inventoryTransaction, changeStock } from './inventoryService.js'
@@ -129,15 +130,15 @@ export async function transitionTransfer(id, event, req, input = {}) {
       ...(event === 'ship' ? { shippedAt: new Date() } : {})
     }
     const changed = await tx.stockTransfer.update({ where: { id }, data })
-    await audit(tx, req, event.toUpperCase(), 'Transfers', 'StockTransfer', id, `${event} ${transfer.transferNumber}.`, { warehouseId: transfer.sourceWarehouseId, relatedWarehouseId: transfer.destinationWarehouseId })
+    await audit(tx, req, event.toUpperCase(), 'Transfers', 'StockTransfer', id, `${event} ${transfer.transferNumber}.`, { warehouseId: transfer.sourceWarehouseId, relatedWarehouseId: transfer.destinationWarehouseId,before:transfer,after:changed })
     if (event === 'submit') {
       const approvers = await tx.user.findMany({ where: { role: { name: 'Administrator' }, status: 'ACTIVE' }, select: { id: true } })
-      if (approvers.length) await tx.notification.createMany({ data: approvers.map(user => ({
-        userId: user.id, type: 'TRANSFER_APPROVAL_REQUEST', title: 'Transfer needs approval',
+      if (approvers.length) await notificationWriter(tx).createMany({ data: approvers.map(user => ({
+        userId: user.id, warehouseId: transfer.sourceWarehouseId, type: 'TRANSFER_APPROVAL_REQUEST', title: 'Transfer needs approval',
         message: `${transfer.transferNumber} is awaiting approval.`, referenceType: 'StockTransfer', referenceId: id
       })) })
     }
-    if (event === 'approve') await tx.notification.create({ data: {
+    if (event === 'approve') await notificationWriter(tx).create({ data: {
       userId: transfer.requestedById, warehouseId: transfer.sourceWarehouseId, type: 'TRANSFER_APPROVED', title: 'Transfer approved',
       message: `${transfer.transferNumber} was approved.`, referenceType: 'StockTransfer', referenceId: id
     } })

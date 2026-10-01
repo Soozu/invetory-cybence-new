@@ -45,17 +45,20 @@ async function assertCategoryParent(tx, id, parentId) {
 
 export async function createCatalog(kind, input, req) {
   if (kind === 'warehouses') requireWarehouseAdministration(req.user)
+  return inventoryTransaction(tx => createCatalogInTransaction(tx, kind, input, req))
+}
+
+export async function createCatalogInTransaction(tx, kind, input, req) {
+  if (kind === 'warehouses') requireWarehouseAdministration(req.user)
   const item = config[kind]
-  return inventoryTransaction(async tx => {
-    const data = { ...input }
-    if (kind === 'categories' || kind === 'brands') data.slug ||= slugify(data.name)
-    if (kind === 'suppliers') data.supplierCode ||= await nextReference(tx, 'supplier', 'SUP', 5)
-    if (kind === 'warehouses') data.code ||= await nextReference(tx, 'warehouse', 'WH', 3)
-    if (kind === 'categories' && data.parentId) await assertCategoryParent(tx, null, data.parentId)
-    const record = await tx[item.model].create({ data })
-    await audit(tx, req, 'CREATED', kind, item.model, record.id, `Created ${kind.slice(0, -1)} ${data.name || data.companyName}.`)
-    return record
-  })
+  const data = { ...input }
+  if (kind === 'categories' || kind === 'brands') data.slug ||= slugify(data.name)
+  if (kind === 'suppliers') data.supplierCode ||= await nextReference(tx, 'supplier', 'SUP', 5)
+  if (kind === 'warehouses') data.code ||= await nextReference(tx, 'warehouse', 'WH', 3)
+  if (kind === 'categories' && data.parentId) await assertCategoryParent(tx, null, data.parentId)
+  const record = await tx[item.model].create({ data })
+  await audit(tx, req, 'CREATED', kind, item.model, record.id, `Created ${kind.slice(0, -1)} ${data.name || data.companyName}.`, {before:null,after:record})
+  return record
 }
 
 export async function updateCatalog(kind, id, input, req) {
@@ -68,7 +71,7 @@ export async function updateCatalog(kind, id, input, req) {
     if ((kind === 'categories' || kind === 'brands') && data.name && !data.slug) data.slug = slugify(data.name)
     if (kind === 'categories' && data.parentId) await assertCategoryParent(tx, id, data.parentId)
     const record = await tx[item.model].update({ where: { id }, data })
-    await audit(tx, req, 'UPDATED', kind, item.model, id, `Updated ${kind.slice(0, -1)}.`)
+    await audit(tx, req, 'UPDATED', kind, item.model, id, `Updated ${kind.slice(0, -1)}.`, {before:existing,after:record})
     return record
   })
 }
@@ -82,6 +85,7 @@ export async function deleteCatalog(kind, id, req) {
     const used = await tx[item.model].findUnique({ where: { id }, include: { _count: { select: { [item.relation]: true } } } })
     if (used._count[item.relation]) throw new HttpError(409, 'This record is in use and cannot be deleted.')
     if (kind === 'categories' && await tx.category.count({ where: { parentId: id } })) throw new HttpError(409, 'Move child categories before deleting this category.')
+    if (kind === 'suppliers' && await tx.attachment.count({ where: { entityType: 'Supplier', entityId: id } })) throw new HttpError(409, 'This supplier has retained attachments and cannot be deleted.');
     if (kind === 'suppliers' && await tx.purchaseOrder.count({ where: { supplierId: id } })) throw new HttpError(409, 'This supplier has purchase history and cannot be deleted.')
     if (kind === 'warehouses' && (
       await tx.purchaseOrder.count({ where: { warehouseId: id } }) ||
@@ -89,7 +93,7 @@ export async function deleteCatalog(kind, id, req) {
       await tx.stockTransfer.count({ where: { OR: [{ sourceWarehouseId: id }, { destinationWarehouseId: id }] } })
     )) throw new HttpError(409, 'This warehouse has inventory history and cannot be deleted.')
     await tx[item.model].delete({ where: { id } })
-    await audit(tx, req, 'DELETED', kind, item.model, id, `Deleted ${kind.slice(0, -1)}.`)
+    await audit(tx, req, 'DELETED', kind, item.model, id, `Deleted ${kind.slice(0, -1)}.`, {before:existing,after:null})
     return { id }
   })
 }
@@ -130,11 +134,13 @@ export async function getProduct(id, user) {
 }
 
 export async function createProduct(input, req) {
-  return inventoryTransaction(async tx => {
-    const product = await tx.product.create({ data: { ...input, barcode: input.barcode || null } })
-    await audit(tx, req, 'CREATED', 'Products', 'Product', product.id, `Created product ${product.sku}.`)
-    return product
-  })
+  return inventoryTransaction(tx => createProductInTransaction(tx, input, req))
+}
+
+export async function createProductInTransaction(tx, input, req) {
+  const product = await tx.product.create({ data: { ...input, barcode: input.barcode || null } })
+  await audit(tx, req, 'CREATED', 'Products', 'Product', product.id, `Created product ${product.sku}.`, {before:null,after:product})
+  return product
 }
 
 export async function updateProduct(id, input, req) {
@@ -145,15 +151,16 @@ export async function updateProduct(id, input, req) {
     const maximumStock = input.maximumStock ?? existing.maximumStock
     if (maximumStock > 0 && maximumStock < minimumStock) throw new HttpError(400, 'Maximum stock must be at least minimum stock.', [{ field: 'maximumStock' }])
     const product = await tx.product.update({ where: { id }, data: { ...input, ...(input.barcode === '' ? { barcode: null } : {}) } })
-    await audit(tx, req, 'UPDATED', 'Products', 'Product', id, `Updated product ${product.sku}.`)
+    await audit(tx, req, 'UPDATED', 'Products', 'Product', id, `Updated product ${product.sku}.`, {before:existing,after:product})
     return product
   })
 }
 
 export async function archiveProduct(id, req) {
   return inventoryTransaction(async tx => {
+    const before = await tx.product.findUnique({where:{id}})
     const product = await tx.product.update({ where: { id }, data: { status: 'ARCHIVED' } })
-    await audit(tx, req, 'ARCHIVED', 'Products', 'Product', id, `Archived product ${product.sku}.`)
+    await audit(tx, req, 'ARCHIVED', 'Products', 'Product', id, `Archived product ${product.sku}.`, {before,after:product})
     return product
   })
 }
@@ -164,13 +171,13 @@ export async function deleteProduct(id, req) {
       stocks: true, movements: true, serialNumbers: true, purchaseOrderItems: true, assets: true
     } } } })
     if (!product) throw new HttpError(404, 'Product not found.')
-    if (Object.values(product._count).some(Boolean)) {
+    if (Object.values(product._count).some(Boolean) || await tx.attachment.count({ where: { entityType: 'Product', entityId: id } })) {
       const archived = await tx.product.update({ where: { id }, data: { status: 'ARCHIVED' } })
-      await audit(tx, req, 'ARCHIVED', 'Products', 'Product', id, `Archived product ${product.sku} with history.`)
+      await audit(tx, req, 'ARCHIVED', 'Products', 'Product', id, `Archived product ${product.sku} with history.`, {before:product,after:archived})
       return { archived: true, product: archived }
     }
     await tx.product.delete({ where: { id } })
-    await audit(tx, req, 'DELETED', 'Products', 'Product', id, `Deleted product ${product.sku}.`)
+    await audit(tx, req, 'DELETED', 'Products', 'Product', id, `Deleted product ${product.sku}.`, {before:product,after:null})
     return { archived: false, id }
   })
 }

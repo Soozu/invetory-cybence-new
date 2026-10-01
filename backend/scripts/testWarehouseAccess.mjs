@@ -36,7 +36,9 @@ try {
   run(['node_modules/prisma/build/index.js', 'migrate', 'deploy', '--schema', path.join(workspace, 'schema.prisma')], { DATABASE_URL: testUrl.href })
   await test.role.create({ data: { id: 'test-legacy-role', name: 'Legacy warehouse role' } })
   await test.warehouse.create({ data: { id: 'test-legacy-warehouse', name: 'Legacy warehouse', code: 'LEGACY' } })
-  await test.user.create({ data: { id: 'test-legacy-user', firstName: 'Legacy', lastName: 'Test', email: 'legacy@warehouse.test', roleId: 'test-legacy-role', warehouseId: 'test-legacy-warehouse', passwordHash: await bcrypt.hash('LegacyTest123!', 4) } })
+  const legacyPasswordHash=await bcrypt.hash('LegacyTest123!',4)
+  // Insert with the initial schema contract; the current client has newer defaults.
+  await test.$executeRaw`INSERT INTO User (id,firstName,lastName,email,roleId,warehouseId,passwordHash,updatedAt) VALUES ('test-legacy-user','Legacy','Test','legacy@warehouse.test','test-legacy-role','test-legacy-warehouse',${legacyPasswordHash},NOW(3))`
   // Use the initial schema's columns before the lifecycle receipt link exists.
   await test.$executeRaw`INSERT INTO Category (id,name,slug,updatedAt) VALUES ('test-legacy-category','Legacy category','legacy-category',NOW(3))`
   await test.$executeRaw`INSERT INTO Brand (id,name,slug,updatedAt) VALUES ('test-legacy-brand','Legacy brand','legacy-brand',NOW(3))`

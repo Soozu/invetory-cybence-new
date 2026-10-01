@@ -1,0 +1,13 @@
+import { apiRequest } from '../lib/api.js'
+export const getReportCatalog=()=>apiRequest('/reports/catalog')
+export const getReportPage=(kind,params)=>apiRequest(`/reports/data/${kind}`,{params})
+export const getReportExportPage=(kind,params)=>apiRequest(`/reports/export/${kind}`,{params})
+export const getSavedReports=()=>apiRequest('/reports/saved')
+export const saveReportConfig=(id,body)=>apiRequest(id?`/reports/saved/${id}`:'/reports/saved',{method:id?'PUT':'POST',body})
+export const archiveReportConfig=(id,revision)=>apiRequest(`/reports/saved/${id}/archive`,{method:'POST',body:{expectedRevision:revision}})
+export const getPreferences=()=>apiRequest('/preferences')
+export const savePreferences=body=>apiRequest('/preferences',{method:'PUT',body})
+export const globalSearch=q=>apiRequest('/search',{params:{q}})
+export const getActivityPage=params=>apiRequest('/activity-logs',{params})
+export const getActivityDetail=id=>apiRequest(`/activity-logs/${id}`)
+export const getReceipt=id=>apiRequest(`/receipts/${id}`)

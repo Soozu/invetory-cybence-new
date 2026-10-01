@@ -8,6 +8,7 @@ backend/uploads/*
 !backend/uploads/.gitkeep
 backend/logs/*
 backend/.test-runtime/
+backend/.private-storage/
 backend/.warehouse-test-state.json
 backend/.*-ui.mjs
 backend/prisma/.*-before.prisma

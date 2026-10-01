@@ -65,17 +65,23 @@ export async function createUser(input, req) {
 }
 
 export async function updateUser(id, input, req) {
+  if(id===req.user.id&&input.status&&input.status!=='ACTIVE')throw new HttpError(400,'You cannot deactivate your own account.')
   return inventoryTransaction(async tx => {
     requireWarehouseAdministration(req.user)
+    const before=await tx.user.findUnique({where:{id}})
     const { warehouseIds, defaultWarehouseId, warehouseId, ...data } = input
     const hasAssignments = ['warehouseIds', 'defaultWarehouseId', 'warehouseId'].some(key => key in input)
     const assignment = hasAssignments ? await assignmentData(tx, input, req) : null
     if (assignment) await tx.userWarehouse.deleteMany({ where: { userId: id } })
     const user = await tx.user.update({ where: { id }, data: {
-      ...data, ...(input.email ? { email: input.email.toLowerCase() } : {}),
+      ...data, ...(input.status && input.status !== 'ACTIVE' ? {authVersion:{increment:1}} : {}), ...(input.email ? { email: input.email.toLowerCase() } : {}),
       ...(assignment ? { warehouseId: assignment.defaultWarehouseId, warehouseAssignments: { create: assignment.rows } } : {})
     }, include: userInclude })
-    await audit(tx, req, 'UPDATED', 'Users', 'User', id, `Updated user ${user.email}.`)
+    if(input.status && input.status !== 'ACTIVE'){
+      await tx.session.updateMany({where:{userId:id,revokedAt:null},data:{revokedAt:new Date()}})
+      await tx.refreshToken.updateMany({where:{userId:id,revokedAt:null},data:{revokedAt:new Date()}})
+    }
+    await audit(tx, req, 'UPDATED', 'Users', 'User', id, `Updated user ${user.email}.`,{before,after:user})
     return userView(user)
   })
 }
@@ -84,9 +90,13 @@ export async function changeUserStatus(id, status, req) {
   requireWarehouseAdministration(req.user)
   if (id === req.user.id && status !== 'ACTIVE') throw new HttpError(400, 'You cannot deactivate your own account.')
   return inventoryTransaction(async tx => {
-    const user = await tx.user.update({ where: { id }, data: { status }, include: userInclude })
-    if (status !== 'ACTIVE') await tx.refreshToken.updateMany({ where: { userId: id, revokedAt: null }, data: { revokedAt: new Date() } })
-    await audit(tx, req, 'STATUS_CHANGED', 'Users', 'User', id, `Changed ${user.email} to ${status}.`)
+    const before=await tx.user.findUnique({where:{id}})
+    const user = await tx.user.update({ where: { id }, data: { status,...(status!=='ACTIVE'?{authVersion:{increment:1}}:{}) }, include: userInclude })
+    if (status !== 'ACTIVE') {
+      await tx.refreshToken.updateMany({ where: { userId: id, revokedAt: null }, data: { revokedAt: new Date() } })
+      await tx.session.updateMany({where:{userId:id,revokedAt:null},data:{revokedAt:new Date()}})
+    }
+    await audit(tx, req, 'STATUS_CHANGED', 'Users', 'User', id, `Changed ${user.email} to ${status}.`,{before,after:user})
     return publicUser(user)
   })
 }
@@ -95,8 +105,9 @@ export async function resetPassword(id, password, req) {
   requireWarehouseAdministration(req.user)
   const passwordHash = await bcrypt.hash(password, 12)
   return inventoryTransaction(async tx => {
-    const user = await tx.user.update({ where: { id }, data: { passwordHash } })
+    const user = await tx.user.update({ where: { id }, data: { passwordHash,authVersion:{increment:1},failedLoginCount:0,lockedUntil:null } })
     await tx.refreshToken.updateMany({ where: { userId: id, revokedAt: null }, data: { revokedAt: new Date() } })
+    await tx.session.updateMany({where:{userId:id,revokedAt:null},data:{revokedAt:new Date()}})
     await audit(tx, req, 'PASSWORD_RESET', 'Users', 'User', id, `Reset password for ${user.email}.`)
     return { id }
   })
@@ -161,10 +172,12 @@ export async function updateSettings(input, req) {
   const unknown = Object.keys(input).filter(key => !settingsGroups[key])
   if (unknown.length) throw new HttpError(400, `Unknown setting: ${unknown.join(', ')}`)
   return inventoryTransaction(async tx => {
+    const rows=await tx.systemSetting.findMany({where:{key:{in:Object.keys(input)}}})
+    const before=Object.fromEntries(rows.map(r=>{let v=r.value;try{v=JSON.parse(v)}catch{}return [r.key,v]}))
     for (const [key, value] of Object.entries(input)) {
       await tx.systemSetting.upsert({ where: { key }, create: { key, value: JSON.stringify(value), group: settingsGroups[key], updatedById: req.user.id }, update: { value: JSON.stringify(value), updatedById: req.user.id } })
     }
-    await audit(tx, req, 'UPDATED', 'Settings', 'SystemSetting', null, `Updated ${Object.keys(input).length} settings.`)
+    await audit(tx, req, 'UPDATED', 'Settings', 'SystemSetting', null, `Updated ${Object.keys(input).length} settings.`,{before,after:input})
     return input
   })
 }

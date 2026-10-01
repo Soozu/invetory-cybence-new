@@ -30,7 +30,16 @@ export const assetUrl = value => value?.startsWith('/uploads/') ? `${apiOrigin}$
 export const setAccessToken = token => { accessToken = token }
 
 async function parseResponse(response) {
-  const payload = await response.json().catch(() => ({}))
+  let payload
+  try { payload = await response.json() }
+  catch {
+    if (response.ok) throw new ApiError(502, 'The server returned an invalid response. Please try again.')
+    payload = {}
+  }
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    if (response.ok) throw new ApiError(502, 'The server returned an invalid response. Please try again.')
+    payload = {}
+  }
   if (!response.ok) throw new ApiError(response.status, payload.message || `Request failed (${response.status}).`, payload.errors || [])
   return payload
 }
@@ -39,6 +48,7 @@ export async function refreshSession() {
   if (!refreshPromise) refreshPromise = fetchWithTimeout(`${API_URL}/auth/refresh`, {
     method: 'POST', credentials: 'include'
   }).then(parseResponse).then(payload => {
+    if (typeof payload.data?.accessToken !== 'string' || !payload.data.accessToken) throw new ApiError(502, 'The server returned an invalid session response. Please try again.')
     accessToken = payload.data.accessToken
     return payload.data
   }).catch(error => {
@@ -48,7 +58,7 @@ export async function refreshSession() {
   return refreshPromise
 }
 
-export async function apiRequest(path, { method = 'GET', body, params, retry = true } = {}) {
+export async function apiRequest(path, { method = 'GET', body, params, retry = true, responseType = 'json' } = {}) {
   const query = params ? `?${new URLSearchParams(Object.entries(params).filter(([, value]) => value !== '' && value !== null && value !== undefined)).toString()}` : ''
   const headers = { ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) }
   if (body !== undefined && !(body instanceof FormData)) headers['Content-Type'] = 'application/json'
@@ -62,12 +72,14 @@ export async function apiRequest(path, { method = 'GET', body, params, retry = t
     throw new ApiError(0, 'Cannot connect to the TechStock API. Check that the backend and MySQL are running.')
   }
   if (response.status === 401 && retry && !path.startsWith('/auth/')) {
-    try { await refreshSession(); return apiRequest(path, { method, body, params, retry: false }) }
-    catch {
+    try { await refreshSession(); return apiRequest(path, { method, body, params, retry: false, responseType }) }
+    catch (error) {
+      if (!(error instanceof ApiError) || error.status !== 401) throw error
       accessToken = null
       window.dispatchEvent(new Event('techstock:session-expired'))
       throw new ApiError(401, 'Session expired. Please sign in again.')
     }
   }
+  if (response.ok && responseType === 'blob') return response.blob()
   return parseResponse(response)
 }

@@ -1,0 +1,25 @@
+import { useEffect,useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { Button,Card,PageHeader,Modal } from '../components/ui.jsx'
+import { useInventory } from '../context/InventoryContext.jsx'
+import { getSessions,revokeSession,revokeUserSessions,unlockAccount } from '../services/systemService.js'
+import { errorText } from '../lib/errors.js'
+import ServerPagination from '../components/ServerPagination.jsx'
+const date=v=>v?new Date(v).toLocaleString():'Unknown'
+export default function Sessions(){
+  const {user,users,logout}=useInventory(),navigate=useNavigate(),[target,setTarget]=useState(''),[page,setPage]=useState(1),[rows,setRows]=useState([]),[pagination,setPagination]=useState(null),[error,setError]=useState(''),[loading,setLoading]=useState(true),[busy,setBusy]=useState(false),[retry,setRetry]=useState(0),[action,setAction]=useState(null),[confirmation,setConfirmation]=useState(''),[message,setMessage]=useState('')
+  useEffect(()=>{let live=true;setLoading(true);setError('');getSessions(target,page).then(r=>{if(live){setRows(r.data);setPagination(r.pagination)}}).catch(e=>{if(live)setError(errorText(e))}).finally(()=>{if(live)setLoading(false)});return()=>{live=false}},[target,page,retry])
+  async function apply(){setBusy(true);setError('');try{
+    const r=action==='all'?await revokeUserSessions(target||user.id,confirmation):action==='unlock'?await unlockAccount(target||user.id):await revokeSession(action.id||'others')
+    setAction(null);setConfirmation('');setMessage(action==='unlock'?'Temporary account lockout cleared.':'Sessions signed out.');setRetry(v=>v+1)
+    if(r.data?.currentRevoked){await logout();navigate('/login')}
+  }catch(e){setError(errorText(e))}finally{setBusy(false)}}
+  return <><PageHeader eyebrow="Account security" title="Sessions" subtitle="Review sign-ins and revoke access immediately."/>
+    {user.role==='Administrator'&&<label className="block max-w-lg text-sm font-semibold">Account<select className="field mt-2" disabled={busy} value={target} onChange={e=>{setTarget(e.target.value);setPage(1);setRows([]);setMessage('')}}><option value="">My account</option>{users.filter(u=>u.id!==user.id).map(u=><option key={u.id} value={u.id}>{u.firstName} {u.lastName} — {u.email}</option>)}</select></label>}
+    <div className="my-4 flex flex-wrap gap-2"><Button variant="secondary" disabled={busy||loading} onClick={()=>{setAction(null);setRetry(v=>v+1)}}>Refresh</Button>{!target&&<Button variant="secondary" disabled={busy||loading} onClick={()=>setAction({id:'others'})}>Sign out other sessions</Button>}{user.role==='Administrator'&&<><Button variant="secondary" disabled={busy||loading} onClick={()=>setAction('all')}>Revoke all for this account</Button><Button variant="secondary" disabled={busy||loading} onClick={()=>setAction('unlock')}>Clear temporary lockout</Button></>}</div>
+    {error&&<p role="alert" className="my-3 text-sm text-rose-600">{error}</p>}{message&&<p role="status" className="my-3 text-sm text-emerald-600">{message}</p>}{loading?<p role="status">Loading sessions…</p>:<div className="space-y-3">{!rows.length&&!error&&<Card className="p-5">No active sessions.</Card>}{rows.map(row=><Card key={row.id} className="space-y-3 p-5"><div className="flex flex-wrap items-center justify-between gap-3"><h2 className="font-semibold">{row.current?'Current session':'Signed-in device'}</h2>{!target&&<Button size="sm" variant="secondary" disabled={busy} onClick={()=>setAction(row)}>Sign out{row.current?' this session':''}</Button>}</div><p className="break-words text-sm">{row.userAgent||'Device information unavailable'}</p><dl className="grid gap-3 text-sm sm:grid-cols-2"><div><dt className="subtle">Login time</dt><dd>{date(row.createdAt)}</dd></div><div><dt className="subtle">Last activity (updated every 5 minutes)</dt><dd>{date(row.lastUsedAt)}</dd></div><div><dt className="subtle">IP address</dt><dd>{row.ipAddress||'Unavailable'}</dd></div><div><dt className="subtle">Expires</dt><dd>{date(row.expiresAt)}</dd></div></dl></Card>)}{pagination&&<ServerPagination pagination={pagination} page={page} onChange={setPage} disabled={busy}/>}</div>}
+    <Modal open={Boolean(action)} onOpenChange={v=>{if(!busy&&!v){setAction(null);setConfirmation('')}}} title={action==='unlock'?'Clear account lockout':'Sign out sessions'} description={action==='unlock'?'Allow this account to try signing in again. Password and status are unchanged.':'Affected devices lose access on their next request. Signing out your current session returns you to login.'}>
+      {action==='all'&&<label className="block text-sm">Type REVOKE ALL SESSIONS<input className="field mt-2" value={confirmation} disabled={busy} onChange={e=>setConfirmation(e.target.value)}/></label>}
+      {error&&<p role="alert" className="mt-3 text-sm text-rose-600">{error}</p>}<div className="mt-5 flex gap-2"><Button disabled={busy||(action==='all'&&confirmation!=='REVOKE ALL SESSIONS')} onClick={apply}>{busy?'Applying…':'Confirm'}</Button><Button variant="secondary" disabled={busy} onClick={()=>setAction(null)}>Cancel</Button></div>
+    </Modal></>
+}

@@ -110,31 +110,6 @@ export function InventoryProvider({ children }) {
     const response = product.id ? await productsApi.updateProduct(product.id, payload) : await productsApi.createProduct(payload)
     return response.data.id
   }, product.id ? 'Product updated.' : 'Product created.')
-  const importProducts = async records => {
-    let imported = 0
-    for (const record of records) {
-      let id
-      try {
-        const response = await productsApi.createProduct(await productPayload({
-          ...record, min: record.min || 0, max: record.max || 0,
-          reorder: record.reorder || 0, cost: record.cost || 0
-        }))
-        id = response.data.id
-        if (Number(record.stock) > 0) await inventoryApi.adjustStock({
-          productId: id,
-          warehouseId: requiredId(data.warehouses, record.warehouse || data.settings.defaultWarehouse, 'warehouse'),
-          type: 'OPENING_STOCK', quantity: Number(record.stock), reason: 'CSV import'
-        })
-        imported++
-      } catch (error) {
-        if (id) await productsApi.deleteProduct(id).catch(() => {})
-        notify(`${record.sku}: ${messageOf(error)}`, 'error')
-      }
-    }
-    await refreshData()
-    notify(`${imported} of ${records.length} products imported.`, imported === records.length ? 'success' : 'error')
-    return imported
-  }
   const archiveProduct = id => run(() => productsApi.updateProduct(id, {
     status: data.products.find(product => product.id === id)?.inactive ? 'ACTIVE' : 'INACTIVE'
   }), 'Product status updated.')
@@ -243,7 +218,7 @@ export function InventoryProvider({ children }) {
 
   return <InventoryContext.Provider value={{
     ...data, user, authState, authError, isMutating: pendingOperations > 0, retryConnection: restore, login, logout, refreshData, notify, toast,
-    saveProduct, importProducts, archiveProduct, adjustStock, createTransfer, transferAction,
+    saveProduct, archiveProduct, adjustStock, createTransfer, transferAction,
     addSupplier, addCategory, addBrand, toggleCategory, toggleBrand, addWarehouse, createOrder, orderAction,
     receiveOrder,
     setSerialStatus, markNotification, saveSettings, addUser, setUserWarehouses, toggleUser, setPermission

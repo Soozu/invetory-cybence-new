@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "nodemon server.js",
     "start": "node server.js",
+    "backup:restore": "node scripts/restoreBackup.mjs",
+    "deployment:check": "node scripts/checkDeployment.mjs",
     "test": "vitest run",
+    "test:transport": "vitest run tests/frontendApi.test.js tests/httpContracts.test.js tests/requestLogging.test.js --no-file-parallelism",
     "test:warehouse-access": "node scripts/testWarehouseAccess.mjs",
     "test:integration": "node scripts/testWarehouseAccess.mjs",
     "prisma:generate": "prisma generate",
@@ -22,13 +25,17 @@
     "bcrypt": "5.1.1",
     "cookie-parser": "1.4.7",
     "cors": "2.8.6",
+    "csv-parse": "7.0.3",
     "dotenv": "17.4.2",
     "express": "5.2.1",
     "express-rate-limit": "8.6.1",
+    "fast-xml-parser": "5.11.2",
+    "file-type": "22.1.1",
     "helmet": "8.3.0",
     "jsonwebtoken": "9.0.3",
     "morgan": "1.12.0",
     "multer": "2.3.0",
+    "yauzl": "3.4.0",
     "zod": "3.25.76"
   },
   "devDependencies": {

@@ -1,5 +1,5 @@
+import { testAccessToken } from './sessionFixture.js'
 import { beforeAll, afterAll, describe, expect, it } from 'vitest'
-import jwt from 'jsonwebtoken'
 import { suggestionQuery, replenishmentSchema, performanceQuery } from '../src/validators/replenishment.js'
 
 it('validates warehouse, snapshots, explicit supplier and real bounded date windows', () => {
@@ -26,7 +26,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('replenishment and supplier perf
       const role = await db.role.create({ data: { name: `RO ${name} ${key}` } })
       for (const grant of new Set(permissions)) { const [module, action] = grant.split('.'); const p = await db.permission.upsert({ where: { module_action: { module, action } }, create: { module, action }, update: {} }); await db.rolePermission.create({ data: { roleId: role.id, permissionId: p.id } }) }
       const record = await db.user.create({ data: { firstName: name, lastName: 'RO', email: `ro-${name}-${key}@test.invalid`, passwordHash: 'unused', roleId: role.id, warehouseAssignments: { create: warehouses.map(row => ({ warehouseId: row.id })) } } })
-      users[name] = { id: record.id, role: role.name, roleId: role.id, warehouseIds: warehouses.map(row => row.id), permissions: [...new Set(permissions)] }; tokens[name] = jwt.sign({}, env.accessSecret, { subject: record.id, expiresIn: '1h' })
+      users[name] = { id: record.id, role: role.name, roleId: role.id, warehouseIds: warehouses.map(row => row.id), permissions: [...new Set(permissions)] }; tokens[name] = await testAccessToken(db,record.id,env.accessSecret)
     }
     f = { a, b, category, brand, supplier, users, tokens, req: { user: users.writer, get: () => null } }
     const { app } = await import('../src/app.js'); server = app.listen(0, '127.0.0.1'); await new Promise(resolve => server.once('listening', resolve)); origin = `http://127.0.0.1:${server.address().port}`

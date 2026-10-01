@@ -130,6 +130,17 @@ enum MaintenanceStatus {
 }
 
 model User {
+  sessions Session[]
+  authVersion Int @default(0)
+  failedLoginCount Int @default(0)
+  lockedUntil DateTime?
+  lastFailedLoginAt DateTime?
+  preferences UserPreference?
+  savedReports SavedReport[]
+  imports ImportBatch[] @relation("ImportUploader")
+  confirmedImports ImportBatch[] @relation("ImportConfirmer")
+  attachments Attachment[] @relation("AttachmentUploader")
+  archivedAttachments Attachment[] @relation("AttachmentArchiver")
   id String @id @default(cuid())
   firstName String
   lastName String
@@ -203,6 +214,22 @@ model RefreshToken {
   createdAt DateTime @default(now())
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
   @@index([userId, expiresAt])
+}
+
+model Session {
+  id String @id @default(cuid())
+  userId String
+  refreshTokenHash String? @unique @db.Char(64)
+  authVersion Int
+  ipAddress String? @db.VarChar(64)
+  userAgent String? @db.VarChar(512)
+  createdAt DateTime @default(now())
+  lastUsedAt DateTime @default(now())
+  expiresAt DateTime
+  revokedAt DateTime?
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId, revokedAt, expiresAt])
+  @@index([expiresAt, revokedAt])
 }
 
 model Role {
@@ -284,6 +311,7 @@ model Supplier {
 }
 
 model Warehouse {
+  imports ImportBatch[]
   id String @id @default(cuid())
   name String @unique
   code String @unique
@@ -935,6 +963,7 @@ model WarrantyClaimEvent {
 }
 
 model Notification {
+  archivedAt DateTime?
   warehouseId String?
   id String @id @default(cuid())
   dedupeKey String? @unique
@@ -948,10 +977,13 @@ model Notification {
   createdAt DateTime @default(now())
   user User @relation(fields: [userId], references: [id])
   @@index([userId, isRead, createdAt])
+  @@index([archivedAt, isRead, createdAt])
   @@index([warehouseId])
 }
 
 model ActivityLog {
+  archivedAt DateTime?
+  changes Json?
   warehouseId String?
   relatedWarehouseId String?
   id String @id @default(cuid())
@@ -969,6 +1001,7 @@ model ActivityLog {
   @@index([userId, createdAt])
   @@index([warehouseId, createdAt])
   @@index([relatedWarehouseId, createdAt])
+  @@index([archivedAt, createdAt])
 }
 
 model SystemSetting {
@@ -979,6 +1012,114 @@ model SystemSetting {
   updatedById String?
   updatedAt DateTime @updatedAt
   updatedBy User? @relation(fields: [updatedById], references: [id])
+}
+
+model UserPreference {
+  userId String @id
+  notifications Json
+  dashboard Json
+  revision Int @default(1)
+  updatedAt DateTime @updatedAt
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model SavedReport {
+  schedules ReportSchedule[]
+  id String @id @default(cuid())
+  userId String
+  name String
+  reportType String
+  filters Json
+  columns Json
+  sortBy String
+  sortOrder String
+  revision Int @default(1)
+  archivedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId, archivedAt, updatedAt])
+}
+
+model BackupRun {
+  id String @id @default(uuid()) @db.Char(36)
+  status String @db.VarChar(20)
+  databaseStatus String @db.VarChar(20)
+  uploadsStatus String @db.VarChar(20)
+  databaseBytes BigInt @default(0)
+  uploadsBytes BigInt @default(0)
+  fileCount Int @default(0)
+  schemaName String @db.VarChar(64)
+  manifestHash String? @db.Char(64)
+  errorSummary String? @db.VarChar(200)
+  requestedById String?
+  startedAt DateTime @default(now())
+  completedAt DateTime?
+  retainedUntil DateTime
+  @@index([startedAt])
+}
+
+model RestorePlan {
+  id String @id @default(uuid()) @db.Char(36)
+  backupId String @db.Char(36)
+  targetSchema String @db.VarChar(64)
+  requestedById String
+  manifestHash String @db.Char(64)
+  status String @default("PENDING") @db.VarChar(20)
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+  confirmedAt DateTime?
+  completedAt DateTime?
+  @@index([requestedById, createdAt])
+}
+
+model RetentionPolicy {
+  id String @id @default("default")
+  revision Int @default(1)
+  notificationDays Int @default(365)
+  activityDays Int @default(730)
+  backupDays Int @default(30)
+  sessionDays Int @default(30)
+  archiveEnabled Boolean @default(false)
+  updatedById String?
+  updatedAt DateTime @updatedAt
+}
+
+model JobLease {
+  name String @id
+  owner String? @db.Char(36)
+  leaseUntil DateTime?
+  lastRunAt DateTime?
+  lastSuccessAt DateTime?
+  lastError String? @db.VarChar(200)
+}
+
+model ReportSchedule {
+  id String @id @default(cuid())
+  savedReportId String
+  userId String
+  intervalDays Int
+  nextRunAt DateTime
+  enabled Boolean @default(true)
+  revision Int @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  savedReport SavedReport @relation(fields:[savedReportId], references:[id], onDelete:Restrict)
+  runs ScheduledReportRun[]
+  @@index([enabled, nextRunAt])
+  @@index([userId, createdAt])
+}
+
+model ScheduledReportRun {
+  id String @id @default(cuid())
+  scheduleId String
+  occurrence DateTime
+  status String @db.VarChar(20)
+  result Json?
+  errorSummary String? @db.VarChar(200)
+  generatedAt DateTime @default(now())
+  schedule ReportSchedule @relation(fields:[scheduleId],references:[id],onDelete:Restrict)
+  @@unique([scheduleId,occurrence])
 }
 
 model StockCount {
@@ -1280,4 +1421,56 @@ model SupplierQuotationItem {
   rfqItem RFQItem @relation(fields: [rfqItemId], references: [id], onDelete: Restrict)
   @@unique([quotationId, rfqItemId])
   @@index([rfqItemId])
+}
+
+// Generic parent identity is resolved and authorized by attachmentSources on every request.
+model Attachment {
+  id String @id @default(cuid())
+  entityType String @db.VarChar(40)
+  entityId String @db.VarChar(191)
+  fileName String @db.VarChar(180)
+  storedName String
+  mimeType String
+  size Int
+  storageProvider String @default("LOCAL")
+  storageKey String @unique
+  sha256 String @db.Char(64)
+  requestKey String @db.Char(36)
+  warehouseId String?
+  relatedWarehouseId String?
+  uploadedById String
+  archivedById String?
+  archivedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  uploadedBy User @relation("AttachmentUploader", fields: [uploadedById], references: [id], onDelete: Restrict)
+  archivedBy User? @relation("AttachmentArchiver", fields: [archivedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  @@unique([entityType, entityId, uploadedById, requestKey])
+  @@index([entityType, entityId, archivedAt, createdAt])
+}
+
+// JSON holds temporary CSV staging only. Confirmed masters and stock remain relational.
+model ImportBatch {
+  id String @id @default(cuid())
+  type String @db.VarChar(40)
+  fileName String @db.VarChar(184)
+  sha256 String @db.Char(64)
+  requestKey String @db.Char(36)
+  uploadedById String
+  confirmedById String?
+  warehouseId String?
+  status String @default("PREVIEW") @db.VarChar(20)
+  revision Int @default(1)
+  rows Json
+  result Json?
+  notes String? @db.VarChar(1000)
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+  confirmedAt DateTime?
+  uploadedBy User @relation("ImportUploader", fields: [uploadedById], references: [id], onDelete: Restrict)
+  confirmedBy User? @relation("ImportConfirmer", fields: [confirmedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  warehouse Warehouse? @relation(fields: [warehouseId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  @@unique([uploadedById, requestKey])
+  @@index([uploadedById, status, createdAt])
+  @@index([warehouseId])
 }

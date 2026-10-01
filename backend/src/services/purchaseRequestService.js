@@ -1,3 +1,4 @@
+import { notificationWriter } from './notificationDelivery.js'
 import { prisma } from '../config/prisma.js'
 import { inventoryTransaction } from './inventoryService.js'
 import { createOrderInTransaction } from './procurementService.js'
@@ -56,7 +57,7 @@ export async function updateRequest(id, input, req) {
     const items = await validatedItems(tx, input), { items: ignored, expectedUpdatedAt: ignoredVersion, ...metadata } = input
     await tx.purchaseRequestItem.deleteMany({ where: { purchaseRequestId: id } })
     const updated = await tx.purchaseRequest.update({ where: { id }, data: { ...metadata, items: { create: items } }, include })
-    await audit(tx, req, 'UPDATED', 'Purchase Requests', 'PurchaseRequest', id, `Updated ${record.prNumber}.`, { warehouseId: record.warehouseId, relatedWarehouseId: input.warehouseId })
+    await audit(tx, req, 'UPDATED', 'Purchase Requests', 'PurchaseRequest', id, `Updated ${record.prNumber}.`, { warehouseId: record.warehouseId, relatedWarehouseId: input.warehouseId,before:record,after:updated })
     return updated
   })
 }
@@ -73,13 +74,13 @@ export async function transitionRequest(id, action, input, req) {
       ...(action === 'approve' ? { approvedAt: new Date(), approvedById: req.user.id, approvalNotes: input.notes || null } : {}),
       ...(action === 'reject' ? { rejectedAt: new Date(), rejectedById: req.user.id, approvalNotes: input.notes } : {}) } })
     if (changed.count !== 1) throw new HttpError(409, 'Purchase request changed concurrently. Reload it.')
-    await audit(tx, req, action.toUpperCase(), 'Purchase Requests', 'PurchaseRequest', id, `${action} ${record.prNumber}.${input.notes ? ` ${input.notes}` : ''}`, { warehouseId: record.warehouseId })
+    await audit(tx, req, action.toUpperCase(), 'Purchase Requests', 'PurchaseRequest', id, `${action} ${record.prNumber}.${input.notes ? ` ${input.notes}` : ''}`, { warehouseId: record.warehouseId,before:record,after:await tx.purchaseRequest.findUnique({where:{id}}) })
     if (action === 'submit') {
       const approvers = await tx.user.findMany({ where: { status: 'ACTIVE', OR: [{ role: { name: 'Administrator' } },
         { warehouseAssignments: { some: { warehouseId: record.warehouseId } }, role: { permissions: { some: { permission: { module: 'purchase_requests', action: 'APPROVE' } } } } }] }, select: { id: true } })
-      if (approvers.length) await tx.notification.createMany({ data: approvers.map(user => ({ userId: user.id, warehouseId: record.warehouseId, type: 'PURCHASE_REQUEST_APPROVAL', title: 'Purchase request needs review', message: `${record.prNumber} is awaiting review.`, referenceType: 'PurchaseRequest', referenceId: id })) })
+      if (approvers.length) await notificationWriter(tx).createMany({ data: approvers.map(user => ({ userId: user.id, warehouseId: record.warehouseId, type: 'PURCHASE_REQUEST_APPROVAL', title: 'Purchase request needs review', message: `${record.prNumber} is awaiting review.`, referenceType: 'PurchaseRequest', referenceId: id })) })
     }
-    if (['approve', 'reject'].includes(action)) await tx.notification.create({ data: { userId: record.requestedById, warehouseId: record.warehouseId, type: 'PURCHASE_REQUEST_DECISION', title: `Purchase request ${step.to.toLowerCase()}`, message: `${record.prNumber} was ${step.to.toLowerCase()}.`, referenceType: 'PurchaseRequest', referenceId: id } })
+    if (['approve', 'reject'].includes(action)) await notificationWriter(tx).create({ data: { userId: record.requestedById, warehouseId: record.warehouseId, type: 'PURCHASE_REQUEST_DECISION', title: `Purchase request ${step.to.toLowerCase()}`, message: `${record.prNumber} was ${step.to.toLowerCase()}.`, referenceType: 'PurchaseRequest', referenceId: id } })
     return requestRecord(tx, id, req.user)
   })
 }

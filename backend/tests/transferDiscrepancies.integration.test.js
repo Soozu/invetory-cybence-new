@@ -1,5 +1,5 @@
+import { testAccessToken } from './sessionFixture.js'
 import { beforeAll, afterAll, describe, expect, it } from 'vitest'
-import jwt from 'jsonwebtoken'
 
 describe.skipIf(!process.env.TEST_DATABASE_URL)('transfer discrepancies with isolated MySQL', () => {
   let db, transfers, receipts, validators, f, server, origin
@@ -20,7 +20,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('transfer discrepancies with iso
       const role = await db.role.create({ data: { name: `TD ${name} ${suffix}` } })
       for (const action of permissions) { const p = await db.permission.upsert({ where: { module_action: { module: 'inventory', action } }, create: { module: 'inventory', action }, update: {} }); await db.rolePermission.create({ data: { roleId: role.id, permissionId: p.id } }) }
       users[name] = await db.user.create({ data: { firstName: name, lastName: 'TD', email: `td-${name}-${suffix}@test.invalid`, passwordHash: 'unused', roleId: role.id, warehouseAssignments: { create: indexes.map(index => ({ warehouseId: warehouses[index].id })) } } })
-      tokens[name] = jwt.sign({}, env.accessSecret, { subject: users[name].id, expiresIn: '1h' })
+      tokens[name] = await testAccessToken(db,users[name].id,env.accessSecret)
     }
     const { app } = await import('../src/app.js'); server = app.listen(0, '127.0.0.1'); await new Promise(resolve => server.once('listening', resolve)); origin = `http://127.0.0.1:${server.address().port}`
     f = { a: warehouses[0], b: warehouses[1], c: warehouses[2], category, brand, users, tokens, req: { user: { id: users.approver.id, role: 'Administrator' }, get: () => null } }

@@ -1,9 +1,11 @@
+import { activityLogs,activityDetail } from '../services/activityService.js'
+import { notificationWhere } from '../services/notificationDelivery.js'
 import { warehouseWhere, activityWhere } from '../services/warehouseAccessService.js'
 import { prisma } from '../config/prisma.js'
 import { ok } from '../utils/http.js'
 import { paginate } from '../utils/query.js'
 import * as service from '../services/managementService.js'
-import { ensureWarrantyNotifications } from '../services/notificationService.js'
+import { ensureUserNotifications } from '../services/notificationService.js'
 
 export const users = {
   list: async (req, res) => { const result = await service.listUsers(req.query, req.user); ok(res, result.data, 'OK', 200, { pagination: result.pagination }) },
@@ -23,25 +25,15 @@ export const roles = {
 }
 export const notifications = {
   list: async (req, res) => {
-    await ensureWarrantyNotifications(req.user)
-    const result = await paginate(prisma.notification, { where: { userId: req.user.id, ...warehouseWhere(req.user) }, query: req.query, allowedSort: ['createdAt', 'isRead'], defaultSort: 'createdAt' })
+    await ensureUserNotifications(req.user)
+    const result = await paginate(prisma.notification, { where: await notificationWhere(prisma,req.user), query: req.query, allowedSort: ['createdAt', 'isRead'], defaultSort: 'createdAt' })
     ok(res, result.data, 'OK', 200, { pagination: result.pagination })
   },
-  read: async (req, res) => ok(res, await prisma.notification.updateMany({ where: { id: req.params.id, userId: req.user.id, ...warehouseWhere(req.user) }, data: { isRead: true } }), 'Notification marked read.'),
-  readAll: async (req, res) => ok(res, await prisma.notification.updateMany({ where: { userId: req.user.id, isRead: false, ...warehouseWhere(req.user) }, data: { isRead: true } }), 'Notifications marked read.')
+  read: async (req, res) => ok(res, await prisma.notification.updateMany({ where: { id: req.params.id, ...await notificationWhere(prisma,req.user) }, data: { isRead: true } }), 'Notification marked read.'),
+  readAll: async (req, res) => ok(res, await prisma.notification.updateMany({ where: { isRead: false, ...await notificationWhere(prisma,req.user) }, data: { isRead: true } }), 'Notifications marked read.')
 }
-export const activity = async (req, res) => {
-  const where = { AND: [activityWhere(req.user)] }
-  if (req.query.user) where.userId = req.query.user
-  if (req.query.module) where.module = req.query.module
-  if (req.query.action) where.action = req.query.action
-  if (req.query.dateFrom || req.query.dateTo) where.createdAt = {
-    ...(req.query.dateFrom ? { gte: new Date(req.query.dateFrom) } : {}),
-    ...(req.query.dateTo ? { lte: new Date(`${req.query.dateTo}T23:59:59.999Z`) } : {})
-  }
-  const result = await paginate(prisma.activityLog, { where, include: { user: { select: { firstName: true, lastName: true, email: true } } }, query: req.query, allowedSort: ['createdAt', 'action', 'module'], defaultSort: 'createdAt' })
-  ok(res, result.data, 'OK', 200, { pagination: result.pagination })
-}
+export const activity=async(req,res)=>res.json({success:true,...await activityLogs(req.query,req.user)})
+export const activityGet=async(req,res)=>ok(res,await activityDetail(req.params.id,req.user))
 export const settings = {
   get: async (req, res) => ok(res, await service.readSettings()),
   update: async (req, res) => ok(res, await service.updateSettings(req.validated, req), 'Settings updated.')

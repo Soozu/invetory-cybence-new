@@ -1,3 +1,4 @@
+import { notificationWriter } from './notificationDelivery.js'
 import { warehouseWhere, requireWarehouseAccess } from './warehouseAccessService.js'
 import { prisma } from '../config/prisma.js'
 import { inventoryTransaction, changeStock } from './inventoryService.js'
@@ -81,7 +82,7 @@ export async function updateOrder(id, input, req) {
       notes: input.notes, subtotal, tax: input.tax, shipping: input.shipping,
       total, items: { create: lines }
     }, include })
-    await audit(tx, req, 'UPDATED', 'Purchasing', 'PurchaseOrder', id, `Updated ${order.poNumber}.`, { warehouseId: order.warehouseId })
+    await audit(tx, req, 'UPDATED', 'Purchasing', 'PurchaseOrder', id, `Updated ${order.poNumber}.`, { warehouseId: order.warehouseId, relatedWarehouseId: existing.warehouseId, before:existing,after:order })
     return order
   })
 }
@@ -101,15 +102,15 @@ export async function transitionOrder(id, event, req) {
     const changed = await tx.purchaseOrder.update({ where: { id }, data: {
       status: transition.to, ...(event === 'approve' ? { approvedById: req.user.id } : {})
     } })
-    await audit(tx, req, event.toUpperCase(), 'Purchasing', 'PurchaseOrder', id, `${event} ${order.poNumber}.`, { warehouseId: order.warehouseId })
+    await audit(tx, req, event.toUpperCase(), 'Purchasing', 'PurchaseOrder', id, `${event} ${order.poNumber}.`, { warehouseId: order.warehouseId,before:order,after:changed })
     if (event === 'submit') {
       const approvers = await tx.user.findMany({ where: { role: { name: 'Administrator' }, status: 'ACTIVE' }, select: { id: true } })
-      if (approvers.length) await tx.notification.createMany({ data: approvers.map(user => ({
-        userId: user.id, type: 'PURCHASE_APPROVAL_REQUEST', title: 'Purchase order needs approval',
+      if (approvers.length) await notificationWriter(tx).createMany({ data: approvers.map(user => ({
+        userId: user.id, warehouseId: order.warehouseId, type: 'PURCHASE_APPROVAL_REQUEST', title: 'Purchase order needs approval',
         message: `${order.poNumber} is awaiting approval.`, referenceType: 'PurchaseOrder', referenceId: id
       })) })
     }
-    if (event === 'approve') await tx.notification.create({ data: {
+    if (event === 'approve') await notificationWriter(tx).create({ data: {
       userId: order.createdById, warehouseId: order.warehouseId, type: 'PURCHASE_APPROVED', title: 'Purchase order approved',
       message: `${order.poNumber} was approved.`, referenceType: 'PurchaseOrder', referenceId: id
     } })
@@ -173,7 +174,7 @@ export async function receiveOrder(id, input, req) {
     const complete = order.items.every(item => item.receivedQuantity + (receivedByItem.get(item.id) || 0) === item.quantity)
     await tx.purchaseOrder.update({ where: { id }, data: { status: complete ? 'RECEIVED' : 'PARTIAL' } })
     await audit(tx, req, 'RECEIVED', 'Purchasing', 'PurchaseReceipt', receipt.id, `Received ${receiptNumber} for ${order.poNumber}.`, { warehouseId: order.warehouseId })
-    await tx.notification.create({ data: {
+    await notificationWriter(tx).create({ data: {
       userId: order.createdById, warehouseId: order.warehouseId, type: 'PURCHASE_RECEIVING', title: 'Purchase order received',
       message: `${order.poNumber} was ${complete ? 'fully' : 'partially'} received.`, referenceType: 'PurchaseOrder', referenceId: id
     } })

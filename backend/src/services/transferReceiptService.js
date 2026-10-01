@@ -1,3 +1,4 @@
+import { deliverNotifications } from './notificationDelivery.js'
 import { inventoryTransaction, changeStock } from './inventoryService.js'
 import { requireTransferAccess, requireWarehouseAccess } from './warehouseAccessService.js'
 import { updateConditionBalance } from '../utils/stockConditions.js'
@@ -121,7 +122,9 @@ async function arrival(tx, transfer, input, req) {
   const document = await tx.transferArrival.create({ data: { referenceNumber, transferId: transfer.id, receivedById: req.user.id, finalArrival: input.finalArrival, notes: input.notes, lines: ledger } })
   if (cases.length) await tx.transferDiscrepancy.createMany({ data: cases.map(row => ({ ...row, transferId: transfer.id, arrivalId: document.id })) })
   await audit(tx, req, 'ARRIVAL_RECORDED', 'Transfers', 'StockTransfer', transfer.id, `${referenceNumber}: ${input.notes}`, { warehouseId: transfer.destinationWarehouseId, relatedWarehouseId: transfer.sourceWarehouseId })
-  return finish(tx, transfer, req, input.finalArrival ? new Date() : undefined)
+  const result=await finish(tx, transfer, req, input.finalArrival ? new Date() : undefined)
+  await deliverNotifications(tx,[{userId:transfer.requestedById,warehouseId:transfer.sourceWarehouseId,type:'TRANSFER_RECEIVED',title:'Transfer arrival recorded',message:`${transfer.transferNumber}: ${referenceNumber} recorded.`,referenceType:'StockTransfer',referenceId:transfer.id}])
+  return result
 }
 export async function receiveTransfer(id, input, req) {
   return inventoryTransaction(async tx => { const transfer = await load(tx, id, req.user); requireWarehouseAccess(req.user, transfer.destinationWarehouseId); version(transfer, input.expectedUpdatedAt); return arrival(tx, transfer, input, req) })

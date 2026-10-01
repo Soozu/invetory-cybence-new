@@ -171,7 +171,7 @@ export async function transitionReturn(id, event, input, req) {
       ...(event === 'complete' ? { completedAt: new Date(), completionNotes: input.notes.trim() } : {})
     } })
     if (changed.count !== 1) throw new HttpError(409, 'This return changed concurrently.')
-    await audit(tx, req, event.toUpperCase(), 'Supplier Returns', 'SupplierReturn', id, `${event} ${row.returnNumber}${input.notes ? `: ${input.notes}` : ''}.`, { warehouseId: row.warehouseId })
+    await audit(tx, req, event.toUpperCase(), 'Supplier Returns', 'SupplierReturn', id, `${event} ${row.returnNumber}${input.notes ? `: ${input.notes}` : ''}.`, { warehouseId: row.warehouseId,before:row,after:await tx.supplierReturn.findUnique({where:{id}}) })
     return record(tx, id, req.user)
   })
 }

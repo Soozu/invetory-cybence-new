@@ -57,7 +57,7 @@ describe.skipIf(!enabled)('warehouse boundaries through live HTTP and MySQL', ()
     const maintenance = await db.maintenanceRecord.create({ data: { assetId: asset.id, issue: 'Test inspection', createdById: users.admin.id } })
     await db.stockMovement.createMany({ data: [a, b].map(warehouse => ({ productId: product.id, warehouseId: warehouse.id, referenceNumber: `TEST-${warehouse.code}`, quantity: 1, previousQuantity: 0, newQuantity: 1, type: 'OPENING_STOCK' })) })
     await db.activityLog.createMany({ data: [a, b].map(warehouse => ({ userId: users.admin.id, warehouseId: warehouse.id, action: 'TEST', module: 'Inventory', description: warehouse.name })) })
-    await db.notification.createMany({ data: [a, b].map(warehouse => ({ userId: users.a.id, warehouseId: warehouse.id, type: 'TEST', title: warehouse.name, message: 'Test notification' })) })
+    await db.notification.createMany({ data: [a, b].map(warehouse => ({ userId: users.a.id, warehouseId: warehouse.id, type: 'LOW_STOCK', title: warehouse.name, message: 'Test notification' })) })
     fixture = { a, b, c, product, serialProduct, serial, order, asset, maintenance, users, supplier }
   }, 30000)
 

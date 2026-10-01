@@ -1,5 +1,7 @@
 # TechStock Inventory
 
+Current expansion status and verification: [Phase 16 release checks](docs/release-verification.md), [unfinished work handoff](docs/unfinished-work-context.md). Deployment is deferred at the user's request; Phase 13–15 browser acceptance and dependency maintenance remain pending.
+
 TechStock is an IT inventory, procurement, and asset management system. The existing responsive React interface now uses an Express API, Prisma, and MySQL. Product, stock, order, asset, user, and audit records are stored in MySQL. Browser storage is used only for the visual theme.
 
 ## Requirements

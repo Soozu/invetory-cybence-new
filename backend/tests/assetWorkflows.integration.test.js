@@ -1,5 +1,5 @@
+import { testAccessToken } from './sessionFixture.js'
 import { beforeAll, afterAll, describe, expect, it } from 'vitest'
-import jwt from 'jsonwebtoken'
 import { assignmentSchema, returnSchema, maintenanceSchema, planSchema, claimActionSchema } from '../src/validators/assets.js'
 
 it('requires versions, inspected returns, valid schedules, decimal costs and explicit evidence', () => {
@@ -25,7 +25,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('asset custody, preventive maint
       const role = await db.role.create({ data: { name: `Asset ${name} ${key}` } })
       for (const grant of grants) { const [module, action] = grant.split('.'), permission = await db.permission.upsert({ where: { module_action: { module, action } }, create: { module, action }, update: {} }); await db.rolePermission.create({ data: { roleId: role.id, permissionId: permission.id } }) }
       const row = await db.user.create({ data: { firstName: name, lastName: 'Asset', email: `aw-${name}-${key}@test.invalid`, passwordHash: 'unused', roleId: role.id, warehouseAssignments: { create: warehouses.map(w => ({ warehouseId: w.id })) } } })
-      users[name] = { id: row.id, role: role.name, warehouseIds: warehouses.map(w => w.id), permissions: grants }; tokens[name] = jwt.sign({}, env.accessSecret, { subject: row.id, expiresIn: '1h' })
+      users[name] = { id: row.id, role: role.name, warehouseIds: warehouses.map(w => w.id), permissions: grants }; tokens[name] = await testAccessToken(db,row.id,env.accessSecret)
     }
     f = { a, b, supplier, category, brand, users, tokens, req: { user: users.writer, get: () => null } }
     const { app } = await import('../src/app.js'); server = app.listen(0, '127.0.0.1'); await new Promise(resolve => server.once('listening', resolve)); origin = `http://127.0.0.1:${server.address().port}`

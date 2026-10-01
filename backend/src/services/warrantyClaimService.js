@@ -1,3 +1,4 @@
+import { deliverNotifications } from './notificationDelivery.js'
 import { prisma } from '../config/prisma.js'
 import { inventoryTransaction } from './inventoryService.js'
 import { warehouseWhere, requireWarehouseAccess, canAccessWarehouse } from './warehouseAccessService.js'
@@ -67,7 +68,10 @@ export async function getClaim(id, user, tx = prisma) {
 async function event(tx, row, action, notes, req, data = {}) {
   await tx.warrantyClaimEvent.create({ data: { claimId: row.id, userId: req.user.id, action, notes, data } })
   await recordSerialEvents(tx, [row.serialNumberId], { type: `WARRANTY_${action}`, warehouseId: row.warehouseId, referenceType: 'WarrantyClaim', referenceId: row.id, referenceNumber: row.claimNumber, notes }, req)
-  await audit(tx, req, action, 'Warranty Claims', 'WarrantyClaim', row.id, `${action} ${row.claimNumber}.`, { warehouseId: row.warehouseId })
+  const after=await tx.warrantyClaim.findUnique({where:{id:row.id}})
+  await audit(tx, req, action, 'Warranty Claims', 'WarrantyClaim', row.id, `${action} ${row.claimNumber}.`, { warehouseId: row.warehouseId,before:action==='CREATED'?null:row,after })
+  const recipients=await tx.user.findMany({where:{status:'ACTIVE',OR:[{role:{name:'Administrator'}},{warehouseAssignments:{some:{warehouseId:row.warehouseId}}}]},select:{id:true}})
+  await deliverNotifications(tx,recipients.map(u=>({userId:u.id,warehouseId:row.warehouseId,type:'WARRANTY_CLAIM_UPDATE',title:'Warranty claim updated',message:`${row.claimNumber}: ${after.status.toLowerCase()}.`,referenceType:'WarrantyClaim',referenceId:row.id})))
 }
 export async function createClaim(input, req) {
   permit(req.user, 'CREATE', 'warranty_claims')

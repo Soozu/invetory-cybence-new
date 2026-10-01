@@ -112,7 +112,7 @@ export async function fulfillReservation(id, input, req) {
     }
     if (record.items.every(item => item.fulfilledQuantity === item.quantity)) await tx.inventoryReservation.update({ where: { id }, data: { status: 'FULFILLED', closedAt: new Date() } })
     else await tx.inventoryReservation.update({ where: { id }, data: { updatedAt: new Date() } })
-    await audit(tx, req, 'FULFILLED', 'Reservations', 'InventoryReservation', id, `Issued reserved inventory from ${record.reservationNumber}.`, { warehouseId: record.warehouseId })
+    await audit(tx, req, 'FULFILLED', 'Reservations', 'InventoryReservation', id, `Issued reserved inventory from ${record.reservationNumber}.`, { warehouseId: record.warehouseId,before:record,after:await tx.inventoryReservation.findUnique({where:{id}}) })
     return reservation(tx, id, req.user)
   })
 }
@@ -134,7 +134,7 @@ async function closeReservation(tx, record, status, req) {
     await hold(tx, { productId: item.productId, warehouseId: record.warehouseId, delta: -remaining, referenceNumber: record.reservationNumber,
       userId: req.user?.id || null, type: status === 'EXPIRED' ? 'RESERVATION_EXPIRED' : 'RESERVATION_RELEASED', notes: `${status.toLowerCase()} ${record.reservationNumber}` })
   }
-  await audit(tx, req, status, 'Reservations', 'InventoryReservation', record.id, `${status.toLowerCase()} ${record.reservationNumber}; released remaining holds.`, { warehouseId: record.warehouseId })
+  await audit(tx, req, status, 'Reservations', 'InventoryReservation', record.id, `${status.toLowerCase()} ${record.reservationNumber}; released remaining holds.`, { warehouseId: record.warehouseId,before:record,after:await tx.inventoryReservation.findUnique({where:{id:record.id}}) })
   return { id: record.id, status }
 }
 export async function releaseReservation(id, req, status = 'RELEASED') {

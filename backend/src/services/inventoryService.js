@@ -1,3 +1,4 @@
+import { notificationWriter } from './notificationDelivery.js'
 import { requireWarehouseAccess } from './warehouseAccessService.js'
 import { Prisma } from '@prisma/client'
 import { prisma } from '../config/prisma.js'
@@ -73,9 +74,9 @@ export async function changeStock(tx, {
   const threshold = product.reorderPoint || product.minimumStock
   const previousAvailable = stock.quantity - stock.reservedQuantity
   const currentAvailable = nextQuantity - stock.reservedQuantity
-  if (delta < 0 && previousAvailable > threshold && currentAvailable <= threshold) {
+  if (delta < 0 && ((currentAvailable === 0 && previousAvailable > 0) || (currentAvailable > 0 && previousAvailable > threshold && currentAvailable <= threshold))) {
     const admins = await tx.user.findMany({ where: { role: { name: 'Administrator' }, status: 'ACTIVE' }, select: { id: true } })
-    if (admins.length) await tx.notification.createMany({ data: admins.map(user => ({
+    if (admins.length) await notificationWriter(tx).createMany({ data: admins.map(user => ({
       userId: user.id, type: currentAvailable === 0 ? 'OUT_OF_STOCK' : 'LOW_STOCK',
       title: currentAvailable === 0 ? 'Product out of stock' : 'Low stock alert',
       message: `${product.name} has ${currentAvailable} available units at ${warehouse.name}.`,
@@ -86,50 +87,52 @@ export async function changeStock(tx, {
 }
 
 export async function adjustStock(input, req) {
+  return inventoryTransaction(tx => adjustStockInTransaction(tx, input, req))
+}
+
+export async function adjustStockInTransaction(tx, input, req) {
   requireWarehouseAccess(req.user, input.warehouseId)
-  return inventoryTransaction(async tx => {
-    const product = await tx.product.findUnique({ where: { id: input.productId } })
-    if (!product) throw new HttpError(404, 'Product not found.')
-    const stock = await tx.warehouseStock.findUnique({ where: { productId_warehouseId: { productId: input.productId, warehouseId: input.warehouseId } } })
-    const current = stock?.quantity || 0
-    const delta = input.type === 'CORRECTION' ? input.quantity - current
-      : ['STOCK_OUT', 'DAMAGE'].includes(input.type) ? -input.quantity : input.quantity
-    await validateSerials(tx, product, input.warehouseId, delta, input.serialNumbers || [])
-    const referenceNumber = input.referenceNumber || await nextReference(tx, 'adjustment', `ADJ-${new Date().getFullYear()}`)
-    const movementType = ['DAMAGE', 'CORRECTION', 'RETURN', 'OPENING_STOCK'].includes(input.type) ? input.type : input.type
-    const result = await changeStock(tx, {
-      productId: input.productId, warehouseId: input.warehouseId, delta,
-      type: movementType, referenceNumber, userId: req.user.id,
-      notes: input.notes || input.reason
-    })
-    const serials = input.serialNumbers || []
-    if (product.trackSerialNumbers && delta > 0) {
-      const warrantyStart = new Date()
-      const warrantyEnd = new Date(warrantyStart)
-      warrantyEnd.setMonth(warrantyEnd.getMonth() + product.warrantyMonths)
-      await tx.serialNumber.createMany({ data: serials.map(serialNumber => ({
-        serialNumber, productId: product.id, warehouseId: input.warehouseId,
-        warrantyStart, warrantyEnd
-      })) })
-    }
-    if (product.trackSerialNumbers && delta < 0) {
-      await tx.serialNumber.updateMany({
-        where: { serialNumber: { in: serials } }, data: { status: 'DISPOSED' }
-      })
-    }
-    const adjustment = await tx.stockAdjustment.create({ data: {
-      referenceNumber, productId: input.productId, warehouseId: input.warehouseId,
-      type: input.type, quantity: input.quantity, reason: input.reason,
-      notes: input.notes, userId: req.user.id
-    } })
-    if (product.trackSerialNumbers && serials.length) {
-      const affected = await tx.serialNumber.findMany({ where: { serialNumber: { in: serials } }, select: { id: true } })
-      await recordSerialEvents(tx, affected.map(serial => serial.id), { type: delta > 0 ? 'STOCK_ADDED' : 'STOCK_REMOVED', fromStatus: delta < 0 ? 'AVAILABLE' : null,
-        toStatus: delta < 0 ? 'DISPOSED' : 'AVAILABLE', warehouseId: input.warehouseId, referenceType: 'StockAdjustment', referenceId: adjustment.id, referenceNumber, notes: input.reason }, req)
-    }
-    await audit(tx, req, 'ADJUSTED', 'Inventory', 'StockAdjustment', adjustment.id, `${input.type} ${input.quantity} ${product.sku}`, { warehouseId: input.warehouseId })
-    return { adjustment, ...result }
+  const product = await tx.product.findUnique({ where: { id: input.productId } })
+  if (!product) throw new HttpError(404, 'Product not found.')
+  const stock = await tx.warehouseStock.findUnique({ where: { productId_warehouseId: { productId: input.productId, warehouseId: input.warehouseId } } })
+  const current = stock?.quantity || 0
+  const delta = input.type === 'CORRECTION' ? input.quantity - current
+    : ['STOCK_OUT', 'DAMAGE'].includes(input.type) ? -input.quantity : input.quantity
+  await validateSerials(tx, product, input.warehouseId, delta, input.serialNumbers || [])
+  const referenceNumber = input.referenceNumber || await nextReference(tx, 'adjustment', `ADJ-${new Date().getFullYear()}`)
+  const movementType = ['DAMAGE', 'CORRECTION', 'RETURN', 'OPENING_STOCK'].includes(input.type) ? input.type : input.type
+  const result = await changeStock(tx, {
+    productId: input.productId, warehouseId: input.warehouseId, delta,
+    type: movementType, referenceNumber, userId: req.user.id,
+    notes: input.notes || input.reason
   })
+  const serials = input.serialNumbers || []
+  if (product.trackSerialNumbers && delta > 0) {
+    const warrantyStart = new Date()
+    const warrantyEnd = new Date(warrantyStart)
+    warrantyEnd.setMonth(warrantyEnd.getMonth() + product.warrantyMonths)
+    await tx.serialNumber.createMany({ data: serials.map(serialNumber => ({
+      serialNumber, productId: product.id, warehouseId: input.warehouseId,
+      warrantyStart, warrantyEnd
+    })) })
+  }
+  if (product.trackSerialNumbers && delta < 0) {
+    await tx.serialNumber.updateMany({
+      where: { serialNumber: { in: serials } }, data: { status: 'DISPOSED' }
+    })
+  }
+  const adjustment = await tx.stockAdjustment.create({ data: {
+    referenceNumber, productId: input.productId, warehouseId: input.warehouseId,
+    type: input.type, quantity: input.quantity, reason: input.reason,
+    notes: input.notes, userId: req.user.id
+  } })
+  if (product.trackSerialNumbers && serials.length) {
+    const affected = await tx.serialNumber.findMany({ where: { serialNumber: { in: serials } }, select: { id: true } })
+    await recordSerialEvents(tx, affected.map(serial => serial.id), { type: delta > 0 ? 'STOCK_ADDED' : 'STOCK_REMOVED', fromStatus: delta < 0 ? 'AVAILABLE' : null,
+      toStatus: delta < 0 ? 'DISPOSED' : 'AVAILABLE', warehouseId: input.warehouseId, referenceType: 'StockAdjustment', referenceId: adjustment.id, referenceNumber, notes: input.reason }, req)
+  }
+  await audit(tx, req, 'ADJUSTED', 'Inventory', 'StockAdjustment', adjustment.id, `${input.type} ${input.quantity} ${product.sku}`, { warehouseId: input.warehouseId,before:{quantity:result.movement.previousQuantity},after:{quantity:result.movement.newQuantity} })
+  return { adjustment, ...result }
 }
 
 export async function changeSerialStatus(id, status, req) {
@@ -160,7 +163,7 @@ export async function changeSerialStatus(id, status, req) {
       notes: `${serial.serialNumber}: ${serial.status} → ${status}` } })
     await recordSerialEvents(tx, [id], { type: 'STATUS_CHANGED', fromStatus: serial.status, toStatus: status, warehouseId: serial.warehouseId,
       referenceType: 'SerialNumber', referenceId: id, referenceNumber }, req)
-    await audit(tx, req, 'STATUS_CHANGED', 'Serial Numbers', 'SerialNumber', id, `Changed ${serial.serialNumber} to ${status}.`, { warehouseId: serial.warehouseId })
+    await audit(tx, req, 'STATUS_CHANGED', 'Serial Numbers', 'SerialNumber', id, `Changed ${serial.serialNumber} to ${status}.`, { warehouseId: serial.warehouseId,before:serial,after:{...serial,status} })
     return tx.serialNumber.findUnique({ where: { id } })
   })
 }

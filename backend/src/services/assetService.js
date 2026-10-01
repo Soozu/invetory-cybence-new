@@ -1,3 +1,4 @@
+import { audit } from '../utils/audit.js'
 import { warehouseWhere, requireWarehouseAccess, canAccessWarehouse, isAdministrator } from './warehouseAccessService.js'
 import { prisma } from '../config/prisma.js'
 import { inventoryTransaction, changeStock } from './inventoryService.js'
@@ -27,27 +28,29 @@ export async function getAsset(id, user) {
   return { ...history(row, user), historyNotice: 'Recorded history starts at installation. Earlier events and unknown legacy warehouse snapshots are not reconstructed.' }
 }
 export async function createAsset(input, req) {
+  return inventoryTransaction(tx => createAssetInTransaction(tx, input, req))
+}
+
+export async function createAssetInTransaction(tx, input, req) {
   permit(req.user, 'CREATE'); requireWarehouseAccess(req.user, input.warehouseId)
-  return inventoryTransaction(async tx => {
-    const product = await tx.product.findUnique({ where: { id: input.productId } })
-    if (!product || product.status !== 'ACTIVE') throw new HttpError(400, 'Product is unavailable.')
-    if (product.trackSerialNumbers && !input.serialNumberId) throw new HttpError(400, 'A serial number is required for this product.')
-    if (!product.trackSerialNumbers && input.serialNumberId) throw new HttpError(400, 'This product does not track serial numbers.')
-    if (input.serialNumberId) {
-      if (await tx.warrantyClaim.count({ where: { activeSerialId: input.serialNumberId } })) throw new HttpError(409, 'Close the warehouse warranty claim before moving this serial into company assets.')
-      const serial = await tx.serialNumber.findFirst({ where: { id: input.serialNumberId, productId: product.id, warehouseId: input.warehouseId, status: 'AVAILABLE', asset: null, maintenanceRecords: { none: { status: { in: ['SCHEDULED', 'IN_REPAIR'] } } }, reservationSelections: { none: { fulfilledAt: null, item: { reservation: { status: 'ACTIVE' } } } } } })
-      if (!serial) throw new HttpError(400, 'Serial number is unavailable at this warehouse.')
-    }
-    const assetTag = await nextReference(tx, 'asset', 'AST', 6)
-    await changeStock(tx, { productId: product.id, warehouseId: input.warehouseId, delta: -1, type: 'ASSET_ASSIGNMENT', referenceNumber: assetTag, userId: req.user.id, notes: 'Moved from warehouse inventory to company assets' })
-    if (input.serialNumberId) {
-      const changed = await tx.serialNumber.updateMany({ where: { id: input.serialNumberId, status: 'AVAILABLE', warehouseId: input.warehouseId }, data: { warehouseId: null } })
-      if (changed.count !== 1) throw new HttpError(409, 'Serial number changed concurrently.')
-    }
-    const asset = await tx.asset.create({ data: { ...input, assetTag }, include })
-    await assetEvent(tx, asset, 'ASSET_CREATED', 'Registered as a company asset; removed from warehouse stock.', req, asset.id, {}, 'ASSET_CREATED', 'AVAILABLE')
-    return asset
-  })
+  const product = await tx.product.findUnique({ where: { id: input.productId } })
+  if (!product || product.status !== 'ACTIVE') throw new HttpError(400, 'Product is unavailable.')
+  if (product.trackSerialNumbers && !input.serialNumberId) throw new HttpError(400, 'A serial number is required for this product.')
+  if (!product.trackSerialNumbers && input.serialNumberId) throw new HttpError(400, 'This product does not track serial numbers.')
+  if (input.serialNumberId) {
+    if (await tx.warrantyClaim.count({ where: { activeSerialId: input.serialNumberId } })) throw new HttpError(409, 'Close the warehouse warranty claim before moving this serial into company assets.')
+    const serial = await tx.serialNumber.findFirst({ where: { id: input.serialNumberId, productId: product.id, warehouseId: input.warehouseId, status: 'AVAILABLE', asset: null, maintenanceRecords: { none: { status: { in: ['SCHEDULED', 'IN_REPAIR'] } } }, reservationSelections: { none: { fulfilledAt: null, item: { reservation: { status: 'ACTIVE' } } } } } })
+    if (!serial) throw new HttpError(400, 'Serial number is unavailable at this warehouse.')
+  }
+  const assetTag = await nextReference(tx, 'asset', 'AST', 6)
+  await changeStock(tx, { productId: product.id, warehouseId: input.warehouseId, delta: -1, type: 'ASSET_ASSIGNMENT', referenceNumber: assetTag, userId: req.user.id, notes: 'Moved from warehouse inventory to company assets' })
+  if (input.serialNumberId) {
+    const changed = await tx.serialNumber.updateMany({ where: { id: input.serialNumberId, status: 'AVAILABLE', warehouseId: input.warehouseId }, data: { warehouseId: null } })
+    if (changed.count !== 1) throw new HttpError(409, 'Serial number changed concurrently.')
+  }
+  const asset = await tx.asset.create({ data: { ...input, assetTag }, include })
+  await assetEvent(tx, asset, 'ASSET_CREATED', 'Registered as a company asset; removed from warehouse stock.', req, asset.id, {}, 'ASSET_CREATED', 'AVAILABLE')
+  return asset
 }
 export async function updateAsset(id, input, req) {
   permit(req.user, 'EDIT')
@@ -157,6 +160,7 @@ export async function createMaintenance(input, req) {
     const record = await tx.maintenanceRecord.create({ data: { ...data, serialNumberId: asset.serialNumberId, warehouseId: asset.warehouseId, createdById: req.user.id, status: input.status || 'SCHEDULED' } })
     if (record.status === 'IN_REPAIR') await beginRepair(tx, asset); else await revise(tx.asset, asset, {})
     await assetEvent(tx, asset, 'MAINTENANCE_CREATED', input.issue, req, record.id, { status: record.status }, record.status === 'IN_REPAIR' ? 'SENT_FOR_REPAIR' : 'MAINTENANCE_CREATED', record.status === 'IN_REPAIR' ? 'FOR_REPAIR' : undefined)
+    await audit(tx,req,'CREATED','Maintenance','MaintenanceRecord',record.id,'Created maintenance record.',{warehouseId:record.warehouseId,before:null,after:record})
     return record
   })
 }
@@ -172,7 +176,9 @@ export async function updateMaintenance(id, input, req) {
     await revise(tx.maintenanceRecord, record, data)
     if (data.status === 'IN_REPAIR') await beginRepair(tx, asset); else await revise(tx.asset, asset, {})
     await assetEvent(tx, asset, data.status === 'IN_REPAIR' ? 'MAINTENANCE_STARTED' : 'MAINTENANCE_UPDATED', data.notes || data.issue || record.issue, req, id, {}, data.status === 'IN_REPAIR' ? 'SENT_FOR_REPAIR' : 'MAINTENANCE_UPDATED', data.status === 'IN_REPAIR' ? 'FOR_REPAIR' : undefined)
-    return tx.maintenanceRecord.findUnique({ where: { id } })
+    const after=await tx.maintenanceRecord.findUnique({where:{id}})
+    await audit(tx,req,'UPDATED','Maintenance','MaintenanceRecord',id,'Updated maintenance record.',{warehouseId:record.warehouseId,before:record,after})
+    return after
   })
 }
 export async function finishMaintenance(id, status, req, input = req.validated || {}) {
@@ -201,6 +207,8 @@ export async function finishMaintenance(id, status, req, input = req.validated |
     }
     const updatedAsset = await tx.asset.findUnique({ where: { id: asset.id } })
     await assetEvent(tx, asset, status === 'COMPLETED' ? 'MAINTENANCE_COMPLETED' : 'MAINTENANCE_CANCELLED', input.notes, req, id, { inspectionResult: input.inspectionResult || null, status: updatedAsset.status }, status === 'COMPLETED' ? 'MAINTENANCE_COMPLETED' : 'MAINTENANCE_CANCELLED', record.status === 'IN_REPAIR' ? (other ? 'FOR_REPAIR' : updatedAsset.status) : undefined)
-    return tx.maintenanceRecord.findUnique({ where: { id } })
+    const after=await tx.maintenanceRecord.findUnique({where:{id}})
+    await audit(tx,req,'UPDATED','Maintenance','MaintenanceRecord',id,'Updated maintenance record.',{warehouseId:record.warehouseId,before:record,after})
+    return after
   })
 }

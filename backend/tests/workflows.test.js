@@ -12,6 +12,7 @@ vi.mock('../src/services/inventoryService.js', () => ({
 }))
 vi.mock('../src/utils/audit.js', () => ({ audit: mocked.audit }))
 vi.mock('../src/utils/references.js', () => ({ nextReference: mocked.nextReference }))
+vi.mock('../src/services/notificationDelivery.js',()=>({notificationWriter:tx=>tx.notification,deliverNotifications:vi.fn()}))
 
 import { receiveOrder } from '../src/services/procurementService.js'
 import { transitionTransfer } from '../src/services/transferService.js'
@@ -97,6 +98,6 @@ describe('procurement, transfer, and asset workflows', () => {
     mocked.tx = { product: { create } }
     await expect(createProduct({ name: 'Router', sku: 'NET-2' }, req)).resolves.toBe(product)
     expect(create).toHaveBeenCalledWith({ data: { name: 'Router', sku: 'NET-2', barcode: null } })
-    expect(mocked.audit).toHaveBeenCalledWith(mocked.tx, req, 'CREATED', 'Products', 'Product', product.id, expect.stringContaining(product.sku))
+    expect(mocked.audit).toHaveBeenCalledWith(mocked.tx, req, 'CREATED', 'Products', 'Product', product.id, expect.stringContaining(product.sku),expect.objectContaining({before:null,after:product}))
   })
 })

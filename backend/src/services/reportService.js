@@ -2,6 +2,7 @@ import { warehouseWhere, getAccessibleWarehouseIds } from './warehouseAccessServ
 import { prisma } from '../config/prisma.js'
 import { stockAlerts, warrantyRecords } from './monitoringService.js'
 import { HttpError } from '../utils/http.js'
+import { requireReport } from './reportCatalog.js'
 
 const dateFilter = query => query.dateFrom || query.dateTo ? {
   ...(query.dateFrom ? { gte: new Date(query.dateFrom) } : {}),
@@ -14,6 +15,7 @@ const productWhere = query => ({
 })
 
 export async function report(kind, query, user) {
+  requireReport(user,kind)
   const product = productWhere(query)
   const warehouseId = query.warehouse
   const scope = warehouseWhere(user, warehouseId)

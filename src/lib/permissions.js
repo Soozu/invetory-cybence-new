@@ -1,11 +1,15 @@
 export function can(user, permission) {
   if (!user) return false
+  if (permission?.admin) return user.role === 'Administrator'
   if (permission?.all) return permission.all.every(key => can(user, key))
   if (Array.isArray(permission)) return permission.some(key => can(user, key))
   return user.role === 'Administrator' || user.permissions?.includes(permission)
 }
 
 export function routePermission(path) {
+  if (path.startsWith('/system/')) return { admin:true }
+  if (path.startsWith('/imports')) return 'imports.VIEW'
+  if (path.startsWith('/attachments')) return 'attachments.VIEW'
   if (path.startsWith('/assets/warranty-claims')) return 'warranty_claims.VIEW'
   if (path.startsWith('/procurement/reorder')) return { all: ['inventory.VIEW', 'purchasing.VIEW', 'purchase_requests.VIEW', 'suppliers.VIEW'] }
   if (path.startsWith('/procurement/supplier-performance')) return { all: ['purchasing.VIEW', 'suppliers.VIEW', 'supplier_returns.VIEW'] }

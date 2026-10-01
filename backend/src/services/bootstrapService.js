@@ -1,8 +1,9 @@
+import { notificationWhere } from './notificationDelivery.js'
 import { warehouseWhere, transferWhere, serialWhere, activityWhere } from './warehouseAccessService.js'
 import { prisma } from '../config/prisma.js'
 import { summary } from './dashboardService.js'
 import { readSettings, userScope } from './managementService.js'
-import { ensureWarrantyNotifications } from './notificationService.js'
+import { ensureUserNotifications } from './notificationService.js'
 import { balanceSnapshot } from '../utils/stockConditions.js'
 
 const day = value => value ? value.toISOString().slice(0, 10) : ''
@@ -15,7 +16,8 @@ export async function bootstrap(user) {
   const productAccess = ['products', 'inventory', 'stock_counts', 'reservations', 'purchase_requests', 'rfqs', 'warehouses', 'purchasing', 'assets', 'dashboard', 'reports'].some(can)
   const transferDestinations = user.role === 'Administrator' || user.permissions.includes('inventory.CREATE')
     ? await prisma.warehouse.findMany({ where: { status: 'ACTIVE' }, select: { id: true, name: true, code: true }, orderBy: { name: 'asc' } }) : []
-  await ensureWarrantyNotifications(user)
+  await ensureUserNotifications(user)
+  const notificationsScope=await notificationWhere(prisma,user)
   const [productRows, categoryRows, brandRows, warehouseRows, supplierRows, orderRows, transferRows,
     movementRows, serialRows, assetRows, maintenanceRows, userRows, logRows, notificationRows,
     roleRows, permissionRows, settings, dashboardSummary] = await Promise.all([
@@ -32,7 +34,7 @@ export async function bootstrap(user) {
     prisma.maintenanceRecord.findMany({ where: { asset: warehouseWhere(user), ...(user.role === 'Administrator' ? {} : { OR: [warehouseWhere(user), { warehouseId: null, status: { in: ['SCHEDULED','IN_REPAIR'] } }] }) }, include: { asset: { include: { serialNumber: true } } }, orderBy: { createdAt: 'desc' } }),
     prisma.user.findMany({ where: userScope(user), include: { role: true, warehouse: true, warehouseAssignments: { include: { warehouse: { select: { id: true, name: true } } } } }, orderBy: { createdAt: 'desc' } }),
     prisma.activityLog.findMany({ where: activityWhere(user), include: { user: true }, orderBy: { createdAt: 'desc' }, take: 500 }),
-    prisma.notification.findMany({ where: { userId: user.id, ...warehouseWhere(user) }, orderBy: { createdAt: 'desc' }, take: 100 }),
+    prisma.notification.findMany({ where: notificationsScope, orderBy: { createdAt: 'desc' }, take: 100 }),
     prisma.role.findMany({ include: { permissions: { include: { permission: true } } } }),
     prisma.permission.findMany(),
     readSettings(), summary(user)
@@ -142,8 +144,12 @@ export async function bootstrap(user) {
     id: row.id, title: row.title, message: row.message, time: dateTime(row.createdAt),
     type: row.type.includes('STOCK') ? 'warning' : 'success', read: row.isRead,
     path: row.referenceType === 'Product' ? `/products/${row.referenceId}` :
+      row.referenceType === 'WarrantyClaim' ? `/assets/warranty-claims/${row.referenceId}` :
+      row.referenceType === 'PreventiveMaintenancePlan' ? '/assets/preventive-maintenance' :
+      row.referenceType === 'MaintenanceRecord' ? '/assets/maintenance' :
+      row.referenceType === 'PurchaseRequest' ? `/procurement/purchase-requests/${row.referenceId}` :
       row.referenceType === 'SerialNumber' ? '/assets/warranties' :
-      row.referenceType === 'StockTransfer' ? '/inventory/transfers' : '/procurement/purchase-orders'
+      row.referenceType === 'StockTransfer' ? `/inventory/transfers/${row.referenceId}` : '/procurement/purchase-orders'
   }))
   const permissions = Object.fromEntries(roleRows.map(row => [row.name, Object.fromEntries(
     row.permissions.reduce((map, item) => {

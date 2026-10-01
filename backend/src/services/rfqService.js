@@ -72,7 +72,7 @@ export async function updateRFQ(id, input, req) {
     await tx.rFQItem.deleteMany({ where: { rfqId: id } }); await tx.rFQSupplier.deleteMany({ where: { rfqId: id } })
     const updated = await tx.rFQ.update({ where: { id }, data: { warehouseId: input.warehouseId, closingDate: input.closingDate, notes: input.notes, updatedAt: nextDocumentVersion(row),
       suppliers: { create: input.supplierIds.map(supplierId => ({ supplierId })) }, items: { create: items } }, include })
-    await audit(tx, req, 'UPDATED', 'RFQs', 'RFQ', id, `Updated ${row.rfqNumber}.`, { warehouseId: row.warehouseId, relatedWarehouseId: input.warehouseId })
+    await audit(tx, req, 'UPDATED', 'RFQs', 'RFQ', id, `Updated ${row.rfqNumber}.`, { warehouseId: row.warehouseId, relatedWarehouseId: input.warehouseId,before:row,after:updated })
     return updated
   })
 }
@@ -94,7 +94,7 @@ export async function transitionRFQ(id, action, input, req) {
     const changed = await tx.rFQ.updateMany({ where: { id, status: row.status }, data: { status: step.to, updatedAt: nextDocumentVersion(row),
       ...(action === 'issue' ? { issuedAt: new Date() } : {}), ...(action === 'close' ? { closedAt: new Date() } : {}) } })
     if (changed.count !== 1) throw new HttpError(409, 'RFQ changed concurrently.')
-    await audit(tx, req, action.toUpperCase(), 'RFQs', 'RFQ', id, `${action} ${row.rfqNumber}.`, { warehouseId: row.warehouseId })
+    await audit(tx, req, action.toUpperCase(), 'RFQs', 'RFQ', id, `${action} ${row.rfqNumber}.`, { warehouseId: row.warehouseId,before:row,after:await tx.rFQ.findUnique({where:{id}}) })
     return rfqRecord(tx, id, req.user)
   })
 }
@@ -115,7 +115,7 @@ export async function awardRFQ(id, input, req) {
     await tx.supplierQuotation.update({ where: { id: quote.id }, data: { status: 'ACCEPTED', updatedAt: nextDocumentVersion(quote) } })
     const changed = await tx.rFQ.updateMany({ where: { id, status: 'CLOSED', selectedQuotationId: null }, data: { status: 'AWARDED', selectedQuotationId: quote.id, selectedById: req.user.id, selectedAt: new Date(), selectionNotes: input.notes, updatedAt: nextDocumentVersion(row) } })
     if (changed.count !== 1) throw new HttpError(409, 'RFQ changed concurrently.')
-    await audit(tx, req, 'AWARDED', 'RFQs', 'RFQ', id, `Manually selected ${quote.quotationNumber} for ${row.rfqNumber}. ${input.notes}`, { warehouseId: row.warehouseId })
+    await audit(tx, req, 'AWARDED', 'RFQs', 'RFQ', id, `Manually selected ${quote.quotationNumber} for ${row.rfqNumber}. ${input.notes}`, { warehouseId: row.warehouseId,before:row,after:await tx.rFQ.findUnique({where:{id}}) })
     return rfqRecord(tx, id, req.user)
   })
 }

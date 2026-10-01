@@ -4,7 +4,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocked = vi.hoisted(() => ({
   prisma: {
     user: { findUnique: vi.fn(), update: vi.fn() },
-    refreshToken: { create: vi.fn() }
+    session: { create: vi.fn() },
+    $queryRaw: vi.fn(),
+    $transaction: vi.fn()
   }
 }))
 vi.mock('../src/config/prisma.js', () => ({ prisma: mocked.prisma }))
@@ -18,16 +20,17 @@ import { login } from '../src/services/authService.js'
 import { authorize } from '../src/middleware/auth.js'
 
 describe('authentication and permissions', () => {
-  beforeEach(() => vi.clearAllMocks())
+  beforeEach(() => { vi.clearAllMocks(); mocked.prisma.$transaction.mockImplementation(fn=>fn(mocked.prisma)) })
 
   it('issues a token and HTTP-only refresh cookie for a correct password', async () => {
     mocked.prisma.user.findUnique.mockResolvedValue({
       id: 'user-1', firstName: 'Test', lastName: 'Admin', email: 'test@example.com',
       passwordHash: await bcrypt.hash('correct-password', 4), status: 'ACTIVE',
+      authVersion:0, failedLoginCount:0,
       roleId: 'role-1', role: { name: 'Administrator', permissions: [] }
     })
     mocked.prisma.user.update.mockResolvedValue({})
-    mocked.prisma.refreshToken.create.mockResolvedValue({})
+    mocked.prisma.session.create.mockResolvedValue({})
     const res = { cookie: vi.fn() }
     const session = await login({ email: 'TEST@example.com', password: 'correct-password', remember: false }, res)
     expect(session.accessToken).toBeTypeOf('string')
@@ -39,10 +42,10 @@ describe('authentication and permissions', () => {
 
   it('rejects an invalid password without creating a refresh token', async () => {
     mocked.prisma.user.findUnique.mockResolvedValue({
-      id: 'user-1', passwordHash: await bcrypt.hash('correct-password', 4), status: 'ACTIVE'
+      id: 'user-1', passwordHash: await bcrypt.hash('correct-password', 4), status: 'ACTIVE', failedLoginCount:0
     })
     await expect(login({ email: 'test@example.com', password: 'wrong-password' }, { cookie: vi.fn() })).rejects.toMatchObject({ status: 401 })
-    expect(mocked.prisma.refreshToken.create).not.toHaveBeenCalled()
+    expect(mocked.prisma.session.create).not.toHaveBeenCalled()
   })
 
   it('rejects a role without permission and allows an administrator', () => {

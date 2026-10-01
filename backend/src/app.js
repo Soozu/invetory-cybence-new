@@ -1,8 +1,16 @@
+import { attachmentRoutes } from './routes/attachmentRoutes.js'
+import { importRoutes } from './routes/importRoutes.js'
+import { preferenceRoutes } from './routes/preferenceRoutes.js'
+import { searchRoutes } from './routes/searchRoutes.js'
+import { sessionRoutes } from './routes/sessionRoutes.js'
+import { systemRoutes } from './routes/systemRoutes.js'
+import { reportScheduleRoutes } from './routes/reportScheduleRoutes.js'
+import { docsRoutes } from './routes/docsRoutes.js'
+import { requestLogging } from './middleware/requestLogging.js'
 import express from 'express'
 import helmet from 'helmet'
 import cors from 'cors'
 import cookieParser from 'cookie-parser'
-import morgan from 'morgan'
 import path from 'node:path'
 import { env } from './config/env.js'
 import { prisma } from './config/prisma.js'
@@ -26,18 +34,20 @@ import { stockCountRoutes } from './routes/stockCountRoutes.js'
 import { reservationRoutes } from './routes/reservationRoutes.js'
 import { barcodeRoutes } from './routes/barcodeRoutes.js'
 import { notFound, errorHandler } from './middleware/errorHandler.js'
+import { HttpError } from './utils/http.js'
 
 export const app = express()
 app.disable('x-powered-by')
+app.set('trust proxy', env.trustProxy)
+app.use(requestLogging)
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }))
 app.use(cors({
   origin(origin, done) {
     if (!origin || env.frontendUrls.includes(origin)) return done(null, true)
-    done(new Error('Origin not allowed by CORS'))
+    done(new HttpError(403, 'Origin not allowed by CORS.'))
   },
   credentials: true
 }))
-app.use(morgan('combined'))
 app.use(express.json({ limit: '1mb' }))
 app.use(cookieParser())
 app.use('/uploads', express.static(path.resolve('uploads')))
@@ -51,6 +61,10 @@ app.get('/api/health', async (req, res) => {
   }
 })
 app.use('/api/auth', authRoutes)
+app.use('/api/sessions', sessionRoutes)
+app.use('/api/system', systemRoutes)
+app.use('/api/report-schedules', reportScheduleRoutes)
+app.use('/api/docs', docsRoutes)
 app.use('/api/bootstrap', bootstrapRoutes)
 app.use('/api/stock-counts', stockCountRoutes)
 app.use('/api/reservations', reservationRoutes)
@@ -66,8 +80,12 @@ app.use('/api/transfers', transferRoutes)
 app.use('/api/replenishment', replenishmentRoutes)
 app.use('/api', assetRoutes)
 app.use('/api', assetWorkflowRoutes)
+app.use('/api/attachments', attachmentRoutes)
+app.use('/api/imports', importRoutes)
 app.use('/api/dashboard', dashboardRoutes)
 app.use('/api/reports', reportRoutes)
+app.use('/api/preferences', preferenceRoutes)
+app.use('/api/search', searchRoutes)
 app.use('/api', managementRoutes)
 app.use(notFound)
 app.use(errorHandler)

@@ -1,3 +1,5 @@
+import Attachments from './pages/Attachments.jsx'
+import Imports from './pages/Imports.jsx'
 import { lazy } from 'react'
 import { Route, Routes, useNavigate } from 'react-router-dom'
 import { ArrowLeft, SearchX } from 'lucide-react'
@@ -56,15 +58,23 @@ const WarrantyClaims=lazy(()=>import('./pages/assets/AssetWorkflowPages.jsx').th
 const WarrantyClaimDetail=lazy(()=>import('./pages/assets/AssetWorkflowPages.jsx').then(m=>({default:m.WarrantyClaimDetail})))
 const Users=lazy(()=>import('./pages/management/ManagementPages.jsx').then(m=>({default:m.Users})))
 const RolesPermissions=lazy(()=>import('./pages/management/ManagementPages.jsx').then(m=>({default:m.RolesPermissions})))
-const ActivityLogs=lazy(()=>import('./pages/management/ManagementPages.jsx').then(m=>({default:m.ActivityLogs})))
-const Reports=lazy(()=>import('./pages/management/ManagementPages.jsx').then(m=>({default:m.Reports})))
+const ActivityLogs=lazy(()=>import('./pages/ActivityLogs.jsx'))
+const Reports=lazy(()=>import('./pages/Reports.jsx'))
+const Preferences=lazy(()=>import('./pages/Preferences.jsx'))
+const Sessions=lazy(()=>import('./pages/Sessions.jsx'))
+const SystemAdministration=lazy(()=>import('./pages/SystemAdministration.jsx'))
+const ReportSchedules=lazy(()=>import('./pages/ReportSchedules.jsx'))
+const ReceiptDetail=lazy(()=>import('./pages/procurement/ReceiptDetail.jsx'))
 const Settings=lazy(()=>import('./pages/management/ManagementPages.jsx').then(m=>({default:m.Settings})))
 const Profile=lazy(()=>import('./pages/management/Profile.jsx'))
 import { Button, Card, EmptyState } from './components/ui.jsx'
 
 function NotFound() { const navigate=useNavigate(); return <Card><EmptyState icon={SearchX} title="Page not found" description="The page you requested is not part of this inventory workspace." action={<Button icon={ArrowLeft} onClick={()=>navigate('/')}>Back to dashboard</Button>}/></Card> }
 export default function App() { return <Routes><Route path="/login" element={<Login/>}/><Route element={<ProtectedRoute/>}><Route element={<DashboardLayout/>}>
-  <Route path="/" element={<Dashboard/>}/>
+  <Route path="/" element={<Dashboard/>}/><Route path="/attachments" element={<Attachments/>}/><Route path="/imports" element={<Imports/>}/>
+  <Route path="/profile/sessions" element={<Sessions/>}/>
+  <Route path="/profile/report-schedules" element={<ReportSchedules/>}/>
+  <Route path="/system/health" element={<SystemAdministration/>}/><Route path="/system/backups" element={<SystemAdministration/>}/><Route path="/system/retention" element={<SystemAdministration/>}/><Route path="/system/docs" element={<SystemAdministration/>}/>
   <Route path="/products" element={<Products/>}/>
   <Route path="/products/new" element={<ProductForm/>}/>
   <Route path="/products/:id" element={<ProductDetails/>}/>
@@ -128,6 +138,6 @@ export default function App() { return <Routes><Route path="/login" element={<Lo
   <Route path="/management/roles" element={<RolesPermissions/>}/>
   <Route path="/management/activity" element={<ActivityLogs/>}/>
   <Route path="/settings" element={<Settings/>}/>
-  <Route path="/profile" element={<Profile/>}/>
+  <Route path="/profile" element={<Profile/>}/><Route path="/profile/preferences" element={<Preferences/>}/><Route path="/procurement/receipts/:id" element={<ReceiptDetail/>}/>
   <Route path="*" element={<NotFound/>}/>
 </Route></Route></Routes> }

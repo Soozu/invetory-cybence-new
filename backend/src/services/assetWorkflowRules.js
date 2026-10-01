@@ -27,5 +27,6 @@ export function serviceable(asset) {
 export async function assetEvent(tx, asset, type, notes, req, referenceId = asset.id, data = {}, serialType = type, toStatus) {
   await tx.assetEvent.create({ data: { assetId: asset.id, warehouseId: asset.warehouseId, userId: req.user.id, type, referenceId, notes: notes || type, data } })
   if (asset.serialNumberId) await recordSerialEvents(tx, [asset.serialNumberId], { type: serialType, ...(toStatus ? { toStatus } : {}), warehouseId: asset.warehouseId, referenceType: 'Asset', referenceId: asset.id, referenceNumber: asset.assetTag, notes: notes || type }, req)
-  await audit(tx, req, type, 'Assets', 'Asset', asset.id, `${type}: ${asset.assetTag}.`, { warehouseId: asset.warehouseId })
+  const after=await tx.asset.findUnique({where:{id:asset.id}})
+  await audit(tx, req, type, 'Assets', 'Asset', asset.id, `${type}: ${asset.assetTag}.`, { warehouseId: asset.warehouseId,relatedWarehouseId:after?.warehouseId,before:type==='ASSET_CREATED'?null:asset,after })
 }
