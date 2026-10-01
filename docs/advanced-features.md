@@ -2,11 +2,13 @@
 
 **Original roadmap numbering:** See [all 31 phase statuses](phase-status.md). The checkpoint headings below use historical grouped delivery numbers. Original Phase 16 is Document Attachments; expanded test coverage is original Phase 30. Use the original numbers for future continuation.
 
+**Owner data import (2026-10-01):** All 136 legacy products, 13 categories and 479 units from Dump20261001 are now in the current TechStock database, assigned to Cybence IT Solutions. Nineteen known serials are retained; 24 missing serials require reconciliation. See [mapping, verification and retained backups](legacy-inventory-import.md). This data import does not change the expansion's unfinished status.
+
 **Checkpoint status (2026-10-01): NOT FINISHED.** Phases 7–12 passed development acceptance. Phases 13–15 are implemented with passing integration, production build and API checks. Phase 16 expanded automated coverage passes with 334 tests. Browser acceptance for Phases 13–15 remains pending because the saved local-preview permission has not been confirmed cleared, and dependency maintenance remains open. Deployment is deferred at the user's request. See [Phase 13](attachments-and-imports.md), [Phase 14](reports-and-preferences.md), [Phase 15](sessions-and-operations.md), [Phase 16 verification](release-verification.md), [dependency review](dependency-review.md) and [unfinished work](unfinished-work-context.md).
 
 ## Delivery order
 
-This expansion is implemented as separate, verified features within the existing React → Express → Prisma → MySQL architecture. JavaScript/JSX, backend business references, transactional inventory writes, audit history, and the development seed remain in use.
+This expansion is implemented as separate, verified features within the existing React → Express → Prisma → MySQL architecture. JavaScript/JSX, backend business references, transactional inventory writes and audit history remain in use. Database seeding now bootstraps one administrator and system access definitions only; it creates no demo business records.
 
 1. Warehouse authorization and multiple user assignments.
 2. Physical stock counts, then inventory reservations.

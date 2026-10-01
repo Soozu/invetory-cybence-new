@@ -39,7 +39,7 @@ FRONTEND_URL=http://localhost:5173,http://localhost:5174
 
 Generate each secret with `node -e "console.log(require('node:crypto').randomBytes(48).toString('hex'))"`. URL encode special characters in the database password. Keep `.env` private; it is ignored by Git.
 
-Run the schema migration and development seed:
+Run the schema migration and administrator-only seed:
 
 ```bash
 npm run prisma:generate
@@ -50,7 +50,7 @@ npm run dev
 
 The migration is also checked in at `backend/prisma/migrations/20260929_initial/migration.sql`. If using a database account without shadow database privileges, run `npx prisma migrate deploy` instead of `npm run prisma:migrate`.
 
-The development seed creates `admin@techstock.local` with password `Admin123!` unless `SEED_ADMIN_EMAIL` and `SEED_ADMIN_PASSWORD` are set **before the first seed**. This account is for local development only. Change its password from **My Profile → Change password** before using the system with real data. Running the seed again does not overwrite an existing admin password.
+The seed creates only one administrator account plus the system role/permission definitions. It does not create other users, products, categories, brands, warehouses, suppliers, stock, serials, orders, assets, history, notifications or demo settings. The default account is `admin@techstock.local` with password `Admin123!` unless `SEED_ADMIN_EMAIL` and `SEED_ADMIN_PASSWORD` are set **before the first seed**. Set your own credentials when creating a real database. Running the seed again preserves the existing administrator password and all existing business data; it does not remove previously seeded demo records.
 
 The API runs at `http://localhost:5000`. Check `http://localhost:5000/api/health` for database connectivity.
 

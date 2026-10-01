@@ -18,7 +18,7 @@ The local storage provider is `ATTACHMENT_STORAGE_PROVIDER=LOCAL`. Unknown provi
 
 1. Preserve a verified database + file backup and the existing application version.
 2. Stop writes for migration/cutover. Inspect pending SQL and current migration ledger. Never use `migrate reset` or replay the full chain against the persistent development UI schema without a ledger.
-3. From `backend`, run `npm ci`, `npm run prisma:generate`, and `npx prisma migrate deploy`. Do not run the development demo seed in production.
+3. From `backend`, run `npm ci`, `npm run prisma:generate`, and `npx prisma migrate deploy`. On a new database, configure SEED_ADMIN_EMAIL and SEED_ADMIN_PASSWORD before running `npm run prisma:seed` to bootstrap one administrator and the system role/permission definitions. The seed creates no demo business data and does not reset an existing administrator password.
 4. Configure production environment, durable directories and a service manager. Run `npm run deployment:check` against the selected target to verify configuration, connectivity and migration completion. It performs no synthetic business mutations.
 5. Build/serve the frontend and start `npm start` for the backend behind TLS. Confirm public `/api/health`, authenticated administrator system health and a scoped real read. Verify session cookie behavior through the deployed origin.
 6. Start workers on the intended API instances (`JOBS_ENABLED=true`); database leases coordinate overlapping runs. Set false on instances where workers are unwanted. Monitor structured request/job logs, disk capacity and backup status. Run external uptime/alerting and copy backups off the host.
