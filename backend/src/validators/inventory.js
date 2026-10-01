@@ -14,5 +14,5 @@ export const adjustmentSchema = z.object({
 })
 
 export const serialStatusSchema = z.object({
-  status: z.enum(['AVAILABLE', 'RESERVED', 'DEFECTIVE', 'FOR_REPAIR', 'RETURNED'])
+  status: z.enum(['AVAILABLE', 'RESERVED', 'DEFECTIVE', 'FOR_REPAIR', 'RETURNED', 'QUARANTINE'])
 })

@@ -54,7 +54,8 @@ export function serialWhere(user) {
   return ids === null ? {} : { OR: [
     { warehouseId: { in: ids } },
     { asset: { warehouseId: { in: ids } } },
-    { transferSelections: { some: { transferItem: { transfer: { ...transferWhere(user), status: 'IN_TRANSIT' } } } } }
+    { returnSelections: { some: { returnItem: { supplierReturn: { warehouseId: { in: ids }, status: { in: ['SHIPPED', 'COMPLETED'] } } } } } },
+    { transferSelections: { some: { OR: [{ outcome: 'LOST' }, { transferItem: { transfer: { status: { in: ['IN_TRANSIT', 'PARTIAL', 'DISCREPANCY'] } } } }], transferItem: { transfer: transferWhere(user) } } } }
   ] }
 }
 

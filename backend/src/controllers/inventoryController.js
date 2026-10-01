@@ -4,6 +4,7 @@ import { ok, HttpError } from '../utils/http.js'
 import { paginate } from '../utils/query.js'
 import { adjustStock, changeSerialStatus } from '../services/inventoryService.js'
 import { stockAlerts, warrantyRecords } from '../services/monitoringService.js'
+import { balanceSnapshot } from '../utils/stockConditions.js'
 
 export const adjustment = async (req, res) => ok(res, await adjustStock(req.validated, req), 'Stock adjusted successfully.', 201)
 
@@ -15,7 +16,7 @@ export const stocks = async (req, res) => {
     where, include: { product: true, warehouse: true }, query: req.query,
     allowedSort: ['createdAt', 'updatedAt', 'quantity'], defaultSort: 'updatedAt'
   })
-  ok(res, result.data.map(row => ({ ...row, availableQuantity: row.quantity - row.reservedQuantity })), 'OK', 200, { pagination: result.pagination })
+  ok(res, result.data.map(row => ({ ...row, ...balanceSnapshot(row) })), 'OK', 200, { pagination: result.pagination })
 }
 
 export const movements = async (req, res) => {

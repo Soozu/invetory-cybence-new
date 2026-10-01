@@ -2,7 +2,7 @@ import { prisma } from '../config/prisma.js'
 import { inventoryTransaction } from './inventoryService.js'
 import { createOrderInTransaction } from './procurementService.js'
 import { requestRecord } from './purchaseRequestService.js'
-import { rfqRecord, currentVersion, quotationsOpen } from './rfqService.js'
+import { rfqRecord, currentVersion, nextDocumentVersion, quotationsOpen } from './rfqService.js'
 import { currencyTotals } from '../utils/currency.js'
 import { nextReference } from '../utils/references.js'
 import { HttpError } from '../utils/http.js'
@@ -33,7 +33,7 @@ export async function createQuotation(rfqId, input, req) {
     const rfq = await rfqRecord(tx, rfqId, req.user), values = await quotationValues(tx, rfq, input), year = new Date().getFullYear()
     if (await tx.supplierQuotation.count({ where: { rfqId, supplierId: input.supplierId } })) throw new HttpError(409, 'A quotation already exists for this supplier. Edit its draft or start a new RFQ round.')
     const row = await tx.supplierQuotation.create({ data: { ...values, rfqId, supplierId: input.supplierId, quotationNumber: await nextReference(tx, `quotation-${year}`, `QTN-${year}`) }, include })
-    await tx.rFQ.update({ where: { id: rfqId }, data: { updatedAt: new Date() } })
+    await tx.rFQ.update({ where: { id: rfqId }, data: { updatedAt: nextDocumentVersion(rfq) } })
     await audit(tx, req, 'CREATED', 'Quotations', 'SupplierQuotation', row.id, `Recorded draft ${row.quotationNumber} for ${rfq.rfqNumber}.`, { warehouseId: rfq.warehouseId })
     return row
   })
@@ -45,8 +45,8 @@ export async function updateQuotation(rfqId, id, input, req) {
     if (input.supplierId !== row.supplierId) throw new HttpError(400, 'The quotation supplier cannot be changed.')
     const values = await quotationValues(tx, rfq, input)
     await tx.supplierQuotationItem.deleteMany({ where: { quotationId: id } })
-    const updated = await tx.supplierQuotation.update({ where: { id }, data: values, include })
-    await tx.rFQ.update({ where: { id: rfqId }, data: { updatedAt: new Date() } })
+    const updated = await tx.supplierQuotation.update({ where: { id }, data: { ...values, updatedAt: nextDocumentVersion(row) }, include })
+    await tx.rFQ.update({ where: { id: rfqId }, data: { updatedAt: nextDocumentVersion(rfq) } })
     await audit(tx, req, 'UPDATED', 'Quotations', 'SupplierQuotation', id, `Updated draft ${row.quotationNumber}.`, { warehouseId: rfq.warehouseId })
     return updated
   })
@@ -55,11 +55,12 @@ export async function transitionQuotation(rfqId, id, action, input, req) {
   return inventoryTransaction(async tx => {
     const { row, rfq } = await quotationRecord(tx, rfqId, id, req.user); currentVersion(row, input); quotationsOpen(rfq)
     if (row.status !== 'DRAFT' || !['submit','cancel'].includes(action)) throw new HttpError(409, 'This quotation cannot perform that action.')
+    if (action === 'submit' && (!rfq.suppliers.some(invitation => invitation.supplierId === row.supplierId) || (await tx.supplier.findUnique({ where: { id: row.supplierId } }))?.status !== 'ACTIVE')) throw new HttpError(400, 'The supplier must be active and invited to this RFQ.')
     if (action === 'submit' && row.validUntil && row.validUntil <= new Date()) throw new HttpError(409, 'An expired quotation cannot be submitted.')
-    const changed = await tx.supplierQuotation.updateMany({ where: { id, status: 'DRAFT' }, data: { status: action === 'submit' ? 'SUBMITTED' : 'CANCELLED', ...(action === 'submit' ? { submittedAt: new Date() } : {}) } })
+    const changed = await tx.supplierQuotation.updateMany({ where: { id, status: 'DRAFT' }, data: { status: action === 'submit' ? 'SUBMITTED' : 'CANCELLED', updatedAt: nextDocumentVersion(row), ...(action === 'submit' ? { submittedAt: new Date() } : {}) } })
     if (changed.count !== 1) throw new HttpError(409, 'Quotation changed concurrently.')
     if (action === 'submit') await tx.rFQSupplier.update({ where: { rfqId_supplierId: { rfqId, supplierId: row.supplierId } }, data: { respondedAt: new Date() } })
-    await tx.rFQ.update({ where: { id: rfqId }, data: { updatedAt: new Date() } })
+    await tx.rFQ.update({ where: { id: rfqId }, data: { updatedAt: nextDocumentVersion(rfq) } })
     await audit(tx, req, action.toUpperCase(), 'Quotations', 'SupplierQuotation', id, `${action} ${row.quotationNumber}.`, { warehouseId: rfq.warehouseId })
     return tx.supplierQuotation.findUnique({ where: { id }, include })
   })
@@ -80,14 +81,14 @@ export async function convertQuotation(rfqId, id, input, req) {
     const order = await createOrderInTransaction(tx, { supplierId: row.supplierId, warehouseId: rfq.warehouseId, expectedDelivery: input.expectedDelivery,
       reference: row.quotationNumber, notes: input.notes, tax: Number(row.tax), shipping: Number(row.shipping), items: lines }, req)
     if (!order.total.equals(row.total)) throw new HttpError(409, 'Purchase order totals do not match the awarded quotation.')
-    const changed = await tx.supplierQuotation.updateMany({ where: { id, status: 'ACCEPTED', purchaseOrderId: null }, data: { status: 'CONVERTED', purchaseOrderId: order.id, convertedAt: new Date() } })
+    const changed = await tx.supplierQuotation.updateMany({ where: { id, status: 'ACCEPTED', purchaseOrderId: null }, data: { status: 'CONVERTED', purchaseOrderId: order.id, convertedAt: new Date(), updatedAt: nextDocumentVersion(row) } })
     if (changed.count !== 1) throw new HttpError(409, 'Quotation changed concurrently.')
     if (request) {
       const converted = await tx.purchaseRequest.updateMany({ where: { id: request.id, status: 'APPROVED', purchaseOrderId: null }, data: { status: 'CONVERTED', purchaseOrderId: order.id, convertedAt: new Date() } })
       if (converted.count !== 1) throw new HttpError(409, 'Purchase request changed concurrently.')
       await audit(tx, req, 'CONVERTED', 'Purchase Requests', 'PurchaseRequest', request.id, `Converted ${request.prNumber} through ${rfq.rfqNumber} and ${row.quotationNumber} to draft ${order.poNumber}.`, { warehouseId: rfq.warehouseId })
     }
-    await tx.rFQ.update({ where: { id: rfqId }, data: { updatedAt: new Date() } })
+    await tx.rFQ.update({ where: { id: rfqId }, data: { updatedAt: nextDocumentVersion(rfq) } })
     await audit(tx, req, 'CONVERTED', 'Quotations', 'SupplierQuotation', id, `Converted awarded ${row.quotationNumber} to draft ${order.poNumber}.`, { warehouseId: rfq.warehouseId })
     return { quotation: await tx.supplierQuotation.findUnique({ where: { id }, include }), purchaseOrder: order }
   })

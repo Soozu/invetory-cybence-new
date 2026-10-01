@@ -5,6 +5,7 @@ import { audit } from '../utils/audit.js'
 import { HttpError } from '../utils/http.js'
 import { nextReference } from '../utils/references.js'
 import { recordSerialEvents } from '../utils/serialEvents.js'
+import { conditionDeltas, updateConditionBalance } from '../utils/stockConditions.js'
 
 export async function inventoryTransaction(work) {
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -140,23 +141,16 @@ export async function changeSerialStatus(id, status, req) {
       throw new HttpError(409, 'This serial is managed through its asset or stock movement.')
     }
     if (serial.status === status) return serial
+    if (serial.status === 'RETURN_PENDING') throw new HttpError(409, 'Release or ship this serial through its supplier return.')
     if (await tx.inventoryReservationSerial.count({ where: { serialNumberId: id, fulfilledAt: null, item: { reservation: { status: 'ACTIVE' } } } })) throw new HttpError(409, 'Release or fulfill this serial through its inventory reservation.')
-    const held = value => ['RESERVED', 'DEFECTIVE', 'FOR_REPAIR', 'RETURNED'].includes(value)
+    const held = value => ['RESERVED', 'DEFECTIVE', 'FOR_REPAIR', 'RETURNED', 'QUARANTINE'].includes(value)
     const reservationDelta = Number(held(status)) - Number(held(serial.status))
     const stock = await tx.warehouseStock.findUnique({ where: {
       productId_warehouseId: { productId: serial.productId, warehouseId: serial.warehouseId }
     } })
     if (!stock) throw new HttpError(409, 'Warehouse balance is missing for this serial.')
-    if (reservationDelta) {
-      if (!stock || stock.reservedQuantity + reservationDelta < 0 || stock.reservedQuantity + reservationDelta > stock.quantity) {
-        throw new HttpError(409, 'Warehouse balance cannot support this serial status.')
-      }
-      const changed = await tx.warehouseStock.updateMany({
-        where: { id: stock.id, reservedQuantity: stock.reservedQuantity },
-        data: { reservedQuantity: { increment: reservationDelta } }
-      })
-      if (changed.count !== 1) throw new HttpError(409, 'Warehouse balance changed concurrently.')
-    }
+    if (await tx.asset.count({ where: { serialNumberId: id } }) || await tx.maintenanceRecord.count({ where: { serialNumberId: id, status: { in: ['SCHEDULED', 'IN_REPAIR'] } } })) throw new HttpError(409, 'Manage this serial through its asset or maintenance record.')
+    await updateConditionBalance(tx, stock, { reservedDelta: reservationDelta, bucketDeltas: conditionDeltas(serial.status, status, 1) })
     const changed = await tx.serialNumber.updateMany({ where: { id, status: serial.status }, data: { status } })
     if (changed.count !== 1) throw new HttpError(409, 'Serial status changed concurrently.')
     const referenceNumber = await nextReference(tx, 'serial-status', 'SER')

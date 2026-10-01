@@ -11,6 +11,7 @@ const ProductForm=lazy(()=>import('./pages/products/ProductForm.jsx'))
 const Categories=lazy(()=>import('./pages/catalog/CatalogPages.jsx').then(m=>({default:m.Categories})))
 const Brands=lazy(()=>import('./pages/catalog/CatalogPages.jsx').then(m=>({default:m.Brands})))
 const StockManagement=lazy(()=>import('./pages/inventory/InventoryPages.jsx').then(m=>({default:m.StockManagement})))
+const StockConditions=lazy(()=>import('./pages/inventory/StockConditionPage.jsx'))
 const StockCounts=lazy(()=>import('./pages/inventory/StockCountPages.jsx').then(m=>({default:m.StockCounts})))
 const StockCountDetail=lazy(()=>import('./pages/inventory/StockCountPages.jsx').then(m=>({default:m.StockCountDetail})))
 const Reservations=lazy(()=>import('./pages/inventory/ReservationPages.jsx').then(m=>({default:m.Reservations})))
@@ -24,7 +25,13 @@ const LowStock=lazy(()=>import('./pages/inventory/InventoryPages.jsx').then(m=>(
 const Warehouses=lazy(()=>import('./pages/warehouses/WarehousePages.jsx').then(m=>({default:m.Warehouses})))
 const WarehouseDetails=lazy(()=>import('./pages/warehouses/WarehousePages.jsx').then(m=>({default:m.WarehouseDetails})))
 const StockTransfers=lazy(()=>import('./pages/warehouses/WarehousePages.jsx').then(m=>({default:m.StockTransfers})))
+const TransferDetail=lazy(()=>import('./pages/warehouses/TransferDetail.jsx'))
+const SupplierReturns=lazy(()=>import('./pages/procurement/SupplierReturnPages.jsx').then(m=>({default:m.SupplierReturns})))
+const SupplierReturnForm=lazy(()=>import('./pages/procurement/SupplierReturnPages.jsx').then(m=>({default:m.SupplierReturnForm})))
+const SupplierReturnDetail=lazy(()=>import('./pages/procurement/SupplierReturnPages.jsx').then(m=>({default:m.SupplierReturnDetail})))
 const Suppliers=lazy(()=>import('./pages/procurement/ProcurementPages.jsx').then(m=>({default:m.Suppliers})))
+const ReorderSuggestions=lazy(()=>import('./pages/procurement/ReplenishmentPages.jsx').then(m=>({default:m.ReorderSuggestions})))
+const SupplierPerformance=lazy(()=>import('./pages/procurement/ReplenishmentPages.jsx').then(m=>({default:m.SupplierPerformance})))
 const SupplierDetails=lazy(()=>import('./pages/procurement/ProcurementPages.jsx').then(m=>({default:m.SupplierDetails})))
 const PurchaseOrders=lazy(()=>import('./pages/procurement/ProcurementPages.jsx').then(m=>({default:m.PurchaseOrders})))
 const CreatePurchaseOrder=lazy(()=>import('./pages/procurement/ProcurementPages.jsx').then(m=>({default:m.CreatePurchaseOrder})))
@@ -42,7 +49,11 @@ const QuotationComparison=lazy(()=>import('./pages/procurement/QuotationComparis
 const Assets=lazy(()=>import('./pages/assets/AssetPages.jsx').then(m=>({default:m.Assets})))
 const AssignedEquipment=lazy(()=>import('./pages/assets/AssetPages.jsx').then(m=>({default:m.AssignedEquipment})))
 const WarrantyTracking=lazy(()=>import('./pages/assets/AssetPages.jsx').then(m=>({default:m.WarrantyTracking})))
-const MaintenanceRecords=lazy(()=>import('./pages/assets/AssetPages.jsx').then(m=>({default:m.MaintenanceRecords})))
+const MaintenanceRecords=lazy(()=>import('./pages/assets/AssetWorkflowPages.jsx').then(m=>({default:m.MaintenanceRecords})))
+const AssetDetail=lazy(()=>import('./pages/assets/AssetWorkflowPages.jsx').then(m=>({default:m.AssetDetail})))
+const PreventiveMaintenance=lazy(()=>import('./pages/assets/AssetWorkflowPages.jsx').then(m=>({default:m.PreventiveMaintenance})))
+const WarrantyClaims=lazy(()=>import('./pages/assets/AssetWorkflowPages.jsx').then(m=>({default:m.WarrantyClaims})))
+const WarrantyClaimDetail=lazy(()=>import('./pages/assets/AssetWorkflowPages.jsx').then(m=>({default:m.WarrantyClaimDetail})))
 const Users=lazy(()=>import('./pages/management/ManagementPages.jsx').then(m=>({default:m.Users})))
 const RolesPermissions=lazy(()=>import('./pages/management/ManagementPages.jsx').then(m=>({default:m.RolesPermissions})))
 const ActivityLogs=lazy(()=>import('./pages/management/ManagementPages.jsx').then(m=>({default:m.ActivityLogs})))
@@ -61,6 +72,7 @@ export default function App() { return <Routes><Route path="/login" element={<Lo
   <Route path="/categories" element={<Categories/>}/>
   <Route path="/brands" element={<Brands/>}/>
   <Route path="/inventory/stock" element={<StockManagement/>}/>
+  <Route path="/inventory/conditions" element={<StockConditions/>}/>
   <Route path="/inventory/stock-counts" element={<StockCounts/>}/>
   <Route path="/inventory/stock-counts/:id" element={<StockCountDetail/>}/>
   <Route path="/inventory/reservations" element={<Reservations/>}/>
@@ -70,13 +82,20 @@ export default function App() { return <Routes><Route path="/login" element={<Lo
   <Route path="/inventory/serial-numbers" element={<SerialNumbers/>}/>
   <Route path="/serial-numbers/:id" element={<SerialLifecycle/>}/>
   <Route path="/inventory/transfers" element={<StockTransfers/>}/>
+  <Route path="/inventory/transfers/:id" element={<TransferDetail/>}/>
   <Route path="/warehouses" element={<Warehouses/>}/>
   <Route path="/warehouses/:id" element={<WarehouseDetails/>}/>
   <Route path="/monitoring/low-stock" element={<LowStock/>}/>
   <Route path="/monitoring/out-of-stock" element={<LowStock outOnly/>}/>
   <Route path="/monitoring/stock-movement" element={<StockMovement/>}/>
   <Route path="/monitoring/expiring-warranty" element={<WarrantyTracking expiringOnly/>}/>
+  <Route path="/procurement/supplier-returns" element={<SupplierReturns/>}/>
+  <Route path="/procurement/supplier-returns/new" element={<SupplierReturnForm/>}/>
+  <Route path="/procurement/supplier-returns/:id/edit" element={<SupplierReturnForm/>}/>
+  <Route path="/procurement/supplier-returns/:id" element={<SupplierReturnDetail/>}/>
   <Route path="/procurement/suppliers" element={<Suppliers/>}/>
+  <Route path="/procurement/reorder" element={<ReorderSuggestions/>}/>
+  <Route path="/procurement/supplier-performance" element={<SupplierPerformance/>}/>
   <Route path="/procurement/purchase-requests" element={<PurchaseRequests/>}/>
   <Route path="/procurement/purchase-requests/new" element={<PurchaseRequestForm/>}/>
   <Route path="/procurement/purchase-requests/:id/edit" element={<PurchaseRequestForm/>}/>
@@ -97,6 +116,10 @@ export default function App() { return <Routes><Route path="/login" element={<Lo
   <Route path="/procurement/receiving/:id" element={<Receiving detail/>}/>
   <Route path="/procurement/history" element={<PurchaseOrders history/>}/>
   <Route path="/assets" element={<Assets/>}/>
+  <Route path="/assets/preventive-maintenance" element={<PreventiveMaintenance/>}/>
+  <Route path="/assets/warranty-claims" element={<WarrantyClaims/>}/>
+  <Route path="/assets/warranty-claims/:id" element={<WarrantyClaimDetail/>}/>
+  <Route path="/assets/:id" element={<AssetDetail/>}/>
   <Route path="/assets/assigned" element={<AssignedEquipment/>}/>
   <Route path="/assets/warranties" element={<WarrantyTracking/>}/>
   <Route path="/assets/maintenance" element={<MaintenanceRecords/>}/>

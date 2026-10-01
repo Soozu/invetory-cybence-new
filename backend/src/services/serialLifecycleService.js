@@ -34,7 +34,9 @@ export async function listSerialEvents(id, query, user) {
   // A serial moving into an accessible warehouse does not reveal events in other warehouses.
   const moduleScope = { AND: [activityWhere(user),
     ...(!can(user, 'assets') ? [{ OR: [{ referenceType: null }, { referenceType: { notIn: ['Asset', 'AssetAssignment', 'MaintenanceRecord'] } }] }] : []),
-    ...(!can(user, 'purchasing') ? [{ OR: [{ referenceType: null }, { referenceType: { not: 'PurchaseReceipt' } }] }] : [])
+    ...(!can(user, 'purchasing') ? [{ OR: [{ referenceType: null }, { referenceType: { not: 'PurchaseReceipt' } }] }] : []),
+    ...(!can(user, 'supplier_returns') ? [{ OR: [{ referenceType: null }, { referenceType: { not: 'SupplierReturn' } }] }] : []),
+    ...(!can(user, 'warranty_claims') ? [{ OR: [{ referenceType: null }, { referenceType: { not: 'WarrantyClaim' } }] }] : [])
   ] }
   return paginate(prisma.serialEvent, { where: { serialNumberId: id, ...moduleScope },
     include: { user: { select: { firstName: true, lastName: true } }, warehouse: { select: { name: true, code: true } }, relatedWarehouse: { select: { name: true, code: true } } },

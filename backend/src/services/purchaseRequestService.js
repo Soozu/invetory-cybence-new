@@ -38,12 +38,14 @@ async function validatedItems(tx, input) {
 }
 export async function createRequest(input, req) {
   requireWarehouseAccess(req.user, input.warehouseId)
-  return inventoryTransaction(async tx => {
-    const items = await validatedItems(tx, input), year = new Date().getFullYear(), { items: ignored, expectedUpdatedAt: ignoredVersion, ...metadata } = input
-    const record = await tx.purchaseRequest.create({ data: { ...metadata, requestedById: req.user.id, prNumber: await nextReference(tx, `purchase-request-${year}`, `PR-${year}`), items: { create: items } }, include })
-    await audit(tx, req, 'CREATED', 'Purchase Requests', 'PurchaseRequest', record.id, `Created ${record.prNumber}.`, { warehouseId: input.warehouseId })
-    return record
-  })
+  return inventoryTransaction(tx => createRequestInTransaction(tx, input, req))
+}
+export async function createRequestInTransaction(tx, input, req) {
+  requireWarehouseAccess(req.user, input.warehouseId)
+  const items = await validatedItems(tx, input), year = new Date().getFullYear(), { items: ignored, expectedUpdatedAt: ignoredVersion, ...metadata } = input
+  const record = await tx.purchaseRequest.create({ data: { ...metadata, requestedById: req.user.id, prNumber: await nextReference(tx, `purchase-request-${year}`, `PR-${year}`), items: { create: items } }, include })
+  await audit(tx, req, 'CREATED', 'Purchase Requests', 'PurchaseRequest', record.id, `Created ${record.prNumber}.`, { warehouseId: input.warehouseId })
+  return record
 }
 export async function updateRequest(id, input, req) {
   requireWarehouseAccess(req.user, input.warehouseId)

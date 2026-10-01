@@ -5,7 +5,6 @@ import * as auth from '../services/authService.js'
 import * as productsApi from '../services/productService.js'
 import * as inventoryApi from '../services/inventoryService.js'
 import * as ordersApi from '../services/purchaseOrderService.js'
-import * as assetsApi from '../services/assetService.js'
 
 const InventoryContext = createContext(null)
 const empty = {
@@ -201,34 +200,6 @@ export function InventoryProvider({ children }) {
     }))
     return ordersApi.receivePurchaseOrder(orderId, { items })
   }, 'Purchase order received.')
-  const addAsset = asset => run(async () => {
-    const serial = data.serials.find(item => item.serial === asset.serial && item.productId === asset.productId && item.status === 'Available')
-    const product = data.products.find(item => item.id === asset.productId)
-    if (product?.serialTracking && !serial) throw new Error('Choose an available serial number for this product.')
-    const warehouse = data.warehouses.find(item => item.name === asset.location) || data.warehouses.find(item => item.name === product?.warehouse) || data.warehouses[0]
-    if (!warehouse) throw new Error('Create a warehouse first.')
-    const response = await assetsApi.createAsset({
-      productId: asset.productId, warehouseId: warehouse.id, serialNumberId: serial?.id || null,
-      purchaseDate: asset.purchaseDate || null
-    })
-    if (asset.assignedTo) await assetsApi.assetAction(response.data.id, 'assign', {
-      assignedTo: asset.assignedTo, department: asset.department || null, location: asset.location || null
-    })
-    return response
-  }, 'Asset added.')
-  const assignAsset = (id, person, department) => run(() => assetsApi.assetAction(id, 'assign', { assignedTo: person, department }), 'Asset assigned.')
-  const returnAsset = id => run(() => assetsApi.assetAction(id, 'return', {}), 'Asset returned.')
-  const addMaintenance = record => run(() => {
-    const asset = data.assets.find(item => item.tag === record.asset)
-    if (!asset) throw new Error('Enter a valid asset tag.')
-    return assetsApi.createMaintenance({
-      assetId: asset.id, issue: record.issue, technician: record.technician,
-      serviceDate: record.date, cost: Number(record.cost) || 0, status: enumValue(record.status)
-    })
-  }, 'Maintenance record created.')
-  const setMaintenanceStatus = (id, status) => run(() => ['Completed', 'Cancelled'].includes(status)
-    ? assetsApi.maintenanceAction(id, status.toLowerCase())
-    : apiRequest(`/maintenance/${id}`, { method: 'PUT', body: { status: enumValue(status) } }), 'Maintenance status updated.')
   const setSerialStatus = (id, status) => run(() => apiRequest(`/serial-numbers/${id}/status`, {
     method: 'PATCH', body: { status: enumValue(status) }
   }), 'Serial status updated.')
@@ -274,7 +245,7 @@ export function InventoryProvider({ children }) {
     ...data, user, authState, authError, isMutating: pendingOperations > 0, retryConnection: restore, login, logout, refreshData, notify, toast,
     saveProduct, importProducts, archiveProduct, adjustStock, createTransfer, transferAction,
     addSupplier, addCategory, addBrand, toggleCategory, toggleBrand, addWarehouse, createOrder, orderAction,
-    receiveOrder, addAsset, assignAsset, returnAsset, addMaintenance, setMaintenanceStatus,
+    receiveOrder,
     setSerialStatus, markNotification, saveSettings, addUser, setUserWarehouses, toggleUser, setPermission
   }}>{children}</InventoryContext.Provider>
 }

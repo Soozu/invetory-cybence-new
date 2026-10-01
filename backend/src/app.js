@@ -12,8 +12,12 @@ import { inventoryRoutes } from './routes/inventoryRoutes.js'
 import { procurementRoutes } from './routes/procurementRoutes.js'
 import { purchaseRequestRoutes } from './routes/purchaseRequestRoutes.js'
 import { rfqRoutes } from './routes/rfqRoutes.js'
+import { supplierReturnRoutes } from './routes/supplierReturnRoutes.js'
+import { stockConditionRoutes } from './routes/stockConditionRoutes.js'
 import { transferRoutes } from './routes/transferRoutes.js'
+import { replenishmentRoutes } from './routes/replenishmentRoutes.js'
 import { assetRoutes } from './routes/assetRoutes.js'
+import { assetWorkflowRoutes } from './routes/assetWorkflowRoutes.js'
 import { dashboardRoutes } from './routes/dashboardRoutes.js'
 import { reportRoutes } from './routes/reportRoutes.js'
 import { managementRoutes } from './routes/managementRoutes.js'
@@ -52,12 +56,16 @@ app.use('/api/stock-counts', stockCountRoutes)
 app.use('/api/reservations', reservationRoutes)
 app.use('/api/purchase-requests', purchaseRequestRoutes)
 app.use('/api/rfqs', rfqRoutes)
+app.use('/api/supplier-returns', supplierReturnRoutes)
+app.use('/api/inventory/conditions', stockConditionRoutes)
 app.use('/api', barcodeRoutes)
 app.use('/api', catalogRoutes)
 app.use('/api', inventoryRoutes)
 app.use('/api', procurementRoutes)
 app.use('/api/transfers', transferRoutes)
+app.use('/api/replenishment', replenishmentRoutes)
 app.use('/api', assetRoutes)
+app.use('/api', assetWorkflowRoutes)
 app.use('/api/dashboard', dashboardRoutes)
 app.use('/api/reports', reportRoutes)
 app.use('/api', managementRoutes)

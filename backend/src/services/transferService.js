@@ -6,14 +6,12 @@ import { audit } from '../utils/audit.js'
 import { HttpError } from '../utils/http.js'
 import { nextReference } from '../utils/references.js'
 import { recordSerialEvents } from '../utils/serialEvents.js'
+import { transferInclude, receiveLegacyTransfer } from './transferReceiptService.js'
 
-const include = {
-  sourceWarehouse: { select: { id: true, name: true, code: true } }, destinationWarehouse: { select: { id: true, name: true, code: true } },
-  requestedBy: { select: { firstName: true, lastName: true } },
-  items: { include: { product: true, serialSelections: { include: { serialNumber: true } } } }
-}
+const include = transferInclude
 
 export async function listTransfers(query, user) {
+  if (query.status && !['DRAFT', 'PENDING', 'APPROVED', 'IN_TRANSIT', 'PARTIAL', 'DISCREPANCY', 'RECEIVED', 'RESOLVED', 'CANCELLED'].includes(query.status)) throw new HttpError(400, 'Invalid transfer status.')
   const where = { AND: [transferWhere(user, query.warehouse)] }
   if (query.status) where.status = query.status
   if (query.warehouse) where.OR = [{ sourceWarehouseId: query.warehouse }, { destinationWarehouseId: query.warehouse }]
@@ -71,16 +69,17 @@ export async function updateTransfer(id, input, req) {
 }
 
 export async function transitionTransfer(id, event, req, input = {}) {
+  if (event === 'receive') return receiveLegacyTransfer(id, input, req)
   const transitions = {
     submit: { from: 'DRAFT', to: 'PENDING' },
     approve: { from: 'PENDING', to: 'APPROVED' },
-    ship: { from: 'APPROVED', to: 'IN_TRANSIT' },
-    receive: { from: 'IN_TRANSIT', to: 'RECEIVED' }
+    ship: { from: 'APPROVED', to: 'IN_TRANSIT' }
   }
   return inventoryTransaction(async tx => {
     const transfer = await tx.stockTransfer.findUnique({ where: { id }, include })
     if (!transfer) throw new HttpError(404, 'Transfer not found.')
     requireTransferAccess(req.user, transfer, event)
+    if (input.expectedUpdatedAt && new Date(input.expectedUpdatedAt).getTime() !== transfer.updatedAt.getTime()) throw new HttpError(409, 'Transfer changed. Reload before continuing.')
     if (event === 'cancel') {
       if (!['DRAFT', 'PENDING', 'APPROVED'].includes(transfer.status)) throw new HttpError(409, 'A shipped or completed transfer cannot be cancelled.')
       const cancelled = await tx.stockTransfer.update({ where: { id }, data: { status: 'CANCELLED' } })
@@ -88,20 +87,22 @@ export async function transitionTransfer(id, event, req, input = {}) {
       return cancelled
     }
     const transition = transitions[event]
+    if (!transition) throw new HttpError(400, 'Invalid transfer action.')
     if (transfer.status !== transition.from) throw new HttpError(409, `Cannot ${event} a ${transfer.status.toLowerCase()} transfer.`)
-    if (input.items && ['ship', 'receive'].includes(event)) {
+    if (input.items && event === 'ship') {
       if (input.items.some(line => !transfer.items.some(item => item.id === line.id && item.product.trackSerialNumbers))) throw new HttpError(400, 'Scanned item must be a serialized line in this transfer.')
       for (const item of transfer.items.filter(item => item.product.trackSerialNumbers)) {
         const scans = input.items.find(line => line.id === item.id)?.serialNumbers
         if (!scans || scans.length !== item.quantity || new Set(scans).size !== scans.length) throw new HttpError(400, `Scan every serial for ${item.product.sku} exactly once.`)
-        if (event === 'receive' && scans.some(value => !item.serialSelections.some(selection => selection.serialNumber.serialNumber === value))) throw new HttpError(409, 'Received serials differ from the shipped selection. Resolve the discrepancy before receiving.')
       }
     }
     if (event === 'ship') {
       for (const item of transfer.items) {
         if (item.product.trackSerialNumbers) {
           const serials = await tx.serialNumber.findMany({
-            where: { productId: item.productId, warehouseId: transfer.sourceWarehouseId, status: 'AVAILABLE', ...(input.items ? { serialNumber: { in: input.items.find(line=>line.id===item.id).serialNumbers } } : {}) },
+            where: { productId: item.productId, warehouseId: transfer.sourceWarehouseId, status: 'AVAILABLE', asset: null,
+              maintenanceRecords: { none: { status: { in: ['SCHEDULED', 'IN_REPAIR'] } } }, reservationSelections: { none: { fulfilledAt: null, item: { reservation: { status: 'ACTIVE' } } } },
+              ...(input.items ? { serialNumber: { in: input.items.find(line=>line.id===item.id).serialNumbers } } : {}) },
             orderBy: { createdAt: 'asc' }, take: item.quantity
           })
           if (serials.length !== item.quantity) throw new HttpError(400, `Insufficient available serial numbers for ${item.product.sku}.`)
@@ -123,38 +124,9 @@ export async function transitionTransfer(id, event, req, input = {}) {
         })
       }
     }
-    if (event === 'receive') {
-      for (const item of transfer.items) {
-        await changeStock(tx, {
-          productId: item.productId, warehouseId: transfer.destinationWarehouseId,
-          delta: item.quantity, type: 'TRANSFER_IN', referenceNumber: transfer.transferNumber,
-          sourceWarehouseId: transfer.sourceWarehouseId, destinationWarehouseId: transfer.destinationWarehouseId,
-          userId: req.user.id, notes: transfer.notes
-        })
-        await tx.stockTransferItem.update({ where: { id: item.id }, data: { receivedQuantity: item.quantity } })
-        if (item.product.trackSerialNumbers) {
-          const serialIds = item.serialSelections.map(selection => selection.serialNumberId)
-          if (serialIds.length !== item.quantity) throw new HttpError(409, 'Transfer serial selection is incomplete.')
-          const changed = await tx.serialNumber.updateMany({
-            where: { id: { in: serialIds }, status: 'RESERVED', warehouseId: null },
-            data: { status: 'AVAILABLE', warehouseId: transfer.destinationWarehouseId }
-          })
-          if (changed.count !== serialIds.length) throw new HttpError(409, 'Transfer serial status changed concurrently.')
-          await recordSerialEvents(tx, serialIds, { type: 'TRANSFER_RECEIVED', fromStatus: 'RESERVED', toStatus: 'AVAILABLE',
-            warehouseId: transfer.destinationWarehouseId, relatedWarehouseId: transfer.sourceWarehouseId,
-            referenceType: 'StockTransfer', referenceId: id, referenceNumber: transfer.transferNumber }, req)
-        }
-      }
-      await tx.notification.create({ data: {
-        userId: transfer.requestedById, warehouseId: transfer.sourceWarehouseId, type: 'TRANSFER_RECEIVED', title: 'Transfer received',
-        message: `${transfer.transferNumber} arrived at ${transfer.destinationWarehouse.name}.`,
-        referenceType: 'StockTransfer', referenceId: id
-      } })
-    }
     const data = { status: transition.to,
       ...(event === 'approve' ? { approvedById: req.user.id, approvedAt: new Date() } : {}),
-      ...(event === 'ship' ? { shippedAt: new Date() } : {}),
-      ...(event === 'receive' ? { receivedById: req.user.id, receivedAt: new Date() } : {})
+      ...(event === 'ship' ? { shippedAt: new Date() } : {})
     }
     const changed = await tx.stockTransfer.update({ where: { id }, data })
     await audit(tx, req, event.toUpperCase(), 'Transfers', 'StockTransfer', id, `${event} ${transfer.transferNumber}.`, { warehouseId: transfer.sourceWarehouseId, relatedWarehouseId: transfer.destinationWarehouseId })

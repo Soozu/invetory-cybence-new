@@ -3,6 +3,7 @@ import { prisma } from '../config/prisma.js'
 import { summary } from './dashboardService.js'
 import { readSettings, userScope } from './managementService.js'
 import { ensureWarrantyNotifications } from './notificationService.js'
+import { balanceSnapshot } from '../utils/stockConditions.js'
 
 const day = value => value ? value.toISOString().slice(0, 10) : ''
 const dateTime = value => value ? value.toISOString().slice(0, 16).replace('T', ' ') : ''
@@ -28,7 +29,7 @@ export async function bootstrap(user) {
     prisma.stockMovement.findMany({ where: warehouseWhere(user), include: { sourceWarehouse: true, destinationWarehouse: true, warehouse: true, user: true }, orderBy: { createdAt: 'desc' }, take: 500 }),
     prisma.serialNumber.findMany({ where: serialWhere(user), include: { warehouse: true, supplier: true, purchaseOrderItem: { include: { purchaseOrder: true } }, asset: { include: { assignments: { where: { status: 'ACTIVE' } } } } }, orderBy: { createdAt: 'desc' } }),
     prisma.asset.findMany({ where: warehouseWhere(user), include: { product: true, serialNumber: true, assignments: { orderBy: { createdAt: 'desc' } } }, orderBy: { createdAt: 'desc' } }),
-    prisma.maintenanceRecord.findMany({ where: { asset: warehouseWhere(user) }, include: { asset: { include: { serialNumber: true } } }, orderBy: { createdAt: 'desc' } }),
+    prisma.maintenanceRecord.findMany({ where: { asset: warehouseWhere(user), ...(user.role === 'Administrator' ? {} : { OR: [warehouseWhere(user), { warehouseId: null, status: { in: ['SCHEDULED','IN_REPAIR'] } }] }) }, include: { asset: { include: { serialNumber: true } } }, orderBy: { createdAt: 'desc' } }),
     prisma.user.findMany({ where: userScope(user), include: { role: true, warehouse: true, warehouseAssignments: { include: { warehouse: { select: { id: true, name: true } } } } }, orderBy: { createdAt: 'desc' } }),
     prisma.activityLog.findMany({ where: activityWhere(user), include: { user: true }, orderBy: { createdAt: 'desc' }, take: 500 }),
     prisma.notification.findMany({ where: { userId: user.id, ...warehouseWhere(user) }, orderBy: { createdAt: 'desc' }, take: 100 }),
@@ -53,7 +54,7 @@ export async function bootstrap(user) {
     }
   })
   const stockLocations = Object.fromEntries(productRows.map(row => [row.id, Object.fromEntries(row.stocks.map(stock => [stock.warehouse.name, stock.quantity]))]))
-  const stockBalances = Object.fromEntries(productRows.map(row => [row.id, row.stocks.map(stock => ({ warehouseId: stock.warehouseId, warehouse: stock.warehouse.name, quantity: stock.quantity, reservedQuantity: stock.reservedQuantity, availableQuantity: stock.quantity - stock.reservedQuantity }))]))
+  const stockBalances = Object.fromEntries(productRows.map(row => [row.id, row.stocks.map(stock => ({ warehouseId: stock.warehouseId, warehouse: stock.warehouse.name, reservedQuantity: stock.reservedQuantity, ...balanceSnapshot(stock) }))]))
   const categories = categoryRows.map(row => ({
     id: row.id, name: row.name, parent: categoryRows.find(parent => parent.id === row.parentId)?.name || '',
     description: row.description || (row.parentId ? `Subcategory of ${categoryRows.find(parent => parent.id === row.parentId)?.name || 'another category'}` : ''),
@@ -87,12 +88,12 @@ export async function bootstrap(user) {
     date: day(row.orderDate), expected: day(row.expectedDelivery), status: label(row.status),
     createdBy: `${row.createdBy.firstName} ${row.createdBy.lastName}`,
     reference: row.reference || '', notes: row.notes || '',
-    lines: row.items.map(item => ({ id: item.id, productId: item.productId, quantity: item.quantity, received: item.receivedQuantity, cost: Number(item.unitCost) }))
+    lines: row.items.map(item => ({ id: item.id, productId: item.productId, quantity: item.quantity, received: item.receivedQuantity, cost: Number(item.unitCost), subtotal: Number(item.subtotal) }))
   }))
   const transfers = transferRows.map(row => ({
     id: row.id, number: row.transferNumber, sourceWarehouseId: row.sourceWarehouseId, destinationWarehouseId: row.destinationWarehouseId, from: row.sourceWarehouse.name,
     to: row.destinationWarehouse.name, items: row.items.length,
-    productId: row.items[0]?.productId, quantity: row.items[0]?.quantity || 0,
+    productId: row.items[0]?.productId, quantity: row.items.reduce((sum, item) => sum + item.quantity, 0),
     requestedBy: `${row.requestedBy.firstName} ${row.requestedBy.lastName}`,
     date: day(row.requestedAt), status: label(row.status), notes: row.notes || ''
   }))

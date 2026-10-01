@@ -50,6 +50,8 @@ enum SerialStatus {
   FOR_REPAIR
   RETURNED
   DISPOSED
+  RETURN_PENDING
+  QUARANTINE
 }
 
 enum MovementType {
@@ -68,6 +70,10 @@ enum MovementType {
   RESERVATION_CREATED
   RESERVATION_RELEASED
   RESERVATION_EXPIRED
+  SUPPLIER_RETURN
+  RETURN_HOLD
+  RETURN_RELEASE
+  CONDITION_CHANGED
 }
 
 enum AdjustmentType {
@@ -86,6 +92,9 @@ enum TransferStatus {
   IN_TRANSIT
   RECEIVED
   CANCELLED
+  PARTIAL
+  DISCREPANCY
+  RESOLVED
 }
 
 enum PurchaseOrderStatus {
@@ -105,6 +114,7 @@ enum AssetStatus {
   RETIRED
   LOST
   DISPOSED
+  QUARANTINE
 }
 
 enum AssignmentStatus {
@@ -146,7 +156,10 @@ model User {
   adjustments StockAdjustment[]
   movements StockMovement[]
   receipts PurchaseReceipt[]
-  assetAssignments AssetAssignment[]
+  assetAssignments AssetAssignment[] @relation("AssignmentIssuer")
+  assetReturns AssetAssignment[] @relation("AssignmentReceiver")
+  assetEvents AssetEvent[]
+  warrantyClaimEvents WarrantyClaimEvent[]
   maintenanceRecords MaintenanceRecord[]
   notifications Notification[]
   activityLogs ActivityLog[]
@@ -160,6 +173,11 @@ model User {
   rejectedPurchaseRequests PurchaseRequest[] @relation("RequestRejector")
   rfqs RFQ[] @relation("RFQCreator")
   awardedRFQs RFQ[] @relation("RFQAwarder")
+  supplierReturns SupplierReturn[] @relation("ReturnCreator")
+  approvedSupplierReturns SupplierReturn[] @relation("ReturnApprover")
+  conditionChanges StockConditionChange[]
+  transferArrivals TransferArrival[]
+  transferResolutions TransferDiscrepancyResolution[]
   @@index([roleId])
   @@index([warehouseId])
 }
@@ -261,6 +279,8 @@ model Supplier {
   purchaseOrders PurchaseOrder[]
   rfqInvitations RFQSupplier[]
   quotations SupplierQuotation[]
+  returns SupplierReturn[]
+  warrantyClaims WarrantyClaim[]
 }
 
 model Warehouse {
@@ -288,12 +308,18 @@ model Warehouse {
   purchaseOrders PurchaseOrder[]
   receipts PurchaseReceipt[]
   assets Asset[]
+  assetAssignments AssetAssignment[]
+  assetEvents AssetEvent[]
+  maintenanceRecords MaintenanceRecord[]
+  warrantyClaims WarrantyClaim[]
   stockCounts StockCount[]
   reservations InventoryReservation[]
   serialEvents SerialEvent[] @relation("SerialEventWarehouse")
   relatedSerialEvents SerialEvent[] @relation("SerialEventRelatedWarehouse")
   purchaseRequests PurchaseRequest[]
   rfqs RFQ[]
+  supplierReturns SupplierReturn[]
+  conditionChanges StockConditionChange[]
   @@index([managerId])
 }
 
@@ -333,6 +359,8 @@ model Product {
   reservationItems InventoryReservationItem[]
   purchaseRequestItems PurchaseRequestItem[]
   rfqItems RFQItem[]
+  supplierReturnItems SupplierReturnItem[]
+  conditionChanges StockConditionChange[]
   @@index([categoryId])
   @@index([brandId])
   @@index([defaultSupplierId])
@@ -345,6 +373,10 @@ model WarehouseStock {
   warehouseId String
   quantity Int @default(0)
   reservedQuantity Int @default(0)
+  quarantineQuantity Int @default(0)
+  defectiveQuantity Int @default(0)
+  forRepairQuantity Int @default(0)
+  returnPendingQuantity Int @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   product Product @relation(fields: [productId], references: [id])
@@ -377,6 +409,10 @@ model SerialNumber {
   receiptId String?
   receipt PurchaseReceipt? @relation(fields: [receiptId], references: [id])
   events SerialEvent[]
+  returnSelections SupplierReturnSerial[]
+  conditionSelections StockConditionSerial[]
+  transferDiscrepancies TransferDiscrepancy[]
+  warrantyClaims WarrantyClaim[]
   @@index([productId, status])
   @@index([warehouseId])
   @@index([warrantyEnd])
@@ -407,6 +443,8 @@ model StockMovement {
   @@index([warehouseId, createdAt])
   @@index([type, createdAt])
   @@index([referenceNumber])
+  conditionChange StockConditionChange?
+  transferResolutions TransferDiscrepancyResolution[]
 }
 
 model StockAdjustment {
@@ -441,6 +479,7 @@ model StockTransfer {
   approvedAt DateTime?
   shippedAt DateTime?
   receivedAt DateTime?
+  arrivalClosedAt DateTime?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   sourceWarehouse Warehouse @relation("TransferSource", fields: [sourceWarehouseId], references: [id])
@@ -449,6 +488,8 @@ model StockTransfer {
   approvedBy User? @relation("TransferApprover", fields: [approvedById], references: [id])
   receivedBy User? @relation("TransferReceiver", fields: [receivedById], references: [id])
   items StockTransferItem[]
+  arrivals TransferArrival[]
+  discrepancies TransferDiscrepancy[]
   @@index([status, createdAt])
 }
 
@@ -458,19 +499,76 @@ model StockTransferItem {
   productId String
   quantity Int
   receivedQuantity Int @default(0)
+  lostQuantity Int @default(0)
+  returnedQuantity Int @default(0)
   transfer StockTransfer @relation(fields: [transferId], references: [id])
   product Product @relation(fields: [productId], references: [id])
   serialSelections StockTransferSerial[]
+  discrepancies TransferDiscrepancy[]
   @@index([productId])
 }
 
 model StockTransferSerial {
   transferItemId String
   serialNumberId String
+  outcome String @default("IN_TRANSIT")
   transferItem StockTransferItem @relation(fields: [transferItemId], references: [id])
   serialNumber SerialNumber @relation(fields: [serialNumberId], references: [id])
   @@id([transferItemId, serialNumberId])
   @@index([serialNumberId])
+}
+
+// Immutable arrival payload contains validated item/serial/movement identities.
+model TransferArrival {
+  id String @id @default(cuid())
+  referenceNumber String @unique
+  transferId String
+  receivedById String
+  finalArrival Boolean @default(false)
+  lines Json
+  notes String @db.Text
+  createdAt DateTime @default(now())
+  transfer StockTransfer @relation(fields: [transferId], references: [id])
+  receivedBy User @relation(fields: [receivedById], references: [id])
+  discrepancies TransferDiscrepancy[]
+  @@index([transferId, createdAt])
+}
+
+model TransferDiscrepancy {
+  id String @id @default(cuid())
+  transferId String
+  transferItemId String
+  arrivalId String
+  kind String
+  quantity Int
+  resolvedQuantity Int @default(0)
+  serialNumberId String?
+  observedSerial String?
+  notes String @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  transfer StockTransfer @relation(fields: [transferId], references: [id])
+  transferItem StockTransferItem @relation(fields: [transferItemId], references: [id])
+  arrival TransferArrival @relation(fields: [arrivalId], references: [id])
+  serialNumber SerialNumber? @relation(fields: [serialNumberId], references: [id], onDelete: Restrict)
+  resolutions TransferDiscrepancyResolution[]
+  @@index([transferId, createdAt])
+  @@index([serialNumberId])
+}
+
+model TransferDiscrepancyResolution {
+  id String @id @default(cuid())
+  discrepancyId String
+  action String
+  quantity Int
+  notes String @db.Text
+  userId String
+  stockMovementId String?
+  createdAt DateTime @default(now())
+  discrepancy TransferDiscrepancy @relation(fields: [discrepancyId], references: [id])
+  user User @relation(fields: [userId], references: [id])
+  stockMovement StockMovement? @relation(fields: [stockMovementId], references: [id], onDelete: Restrict)
+  @@index([discrepancyId, createdAt])
 }
 
 model PurchaseOrder {
@@ -499,6 +597,7 @@ model PurchaseOrder {
   receipts PurchaseReceipt[]
   sourcePurchaseRequest PurchaseRequest?
   sourceQuotation SupplierQuotation?
+  supplierReturns SupplierReturn[]
   @@index([supplierId, status])
   @@index([warehouseId, orderDate])
 }
@@ -533,6 +632,8 @@ model PurchaseReceipt {
   items PurchaseReceiptItem[]
   serialNumbers SerialNumber[]
   @@index([purchaseOrderId, receivedAt])
+  supplierReturns SupplierReturn[]
+  warrantyClaims WarrantyClaim[]
 }
 
 model PurchaseReceiptItem {
@@ -545,6 +646,133 @@ model PurchaseReceiptItem {
   purchaseOrderItem PurchaseOrderItem @relation(fields: [purchaseOrderItemId], references: [id])
   product Product @relation(fields: [productId], references: [id])
   @@index([purchaseOrderItemId])
+  supplierReturnItems SupplierReturnItem[]
+}
+
+enum SupplierReturnStatus {
+  DRAFT
+  PENDING
+  APPROVED
+  SHIPPED
+  COMPLETED
+  CANCELLED
+}
+
+enum SupplierReturnReason {
+  DEFECTIVE
+  WRONG_ITEM
+  DAMAGED
+  WARRANTY
+  OVER_DELIVERY
+  OTHER
+}
+
+enum ReturnCondition {
+  AVAILABLE
+  DEFECTIVE
+  DAMAGED
+  FOR_REPAIR
+}
+
+model SupplierReturn {
+  warrantyClaims WarrantyClaim[]
+  id String @id @default(cuid())
+  returnNumber String @unique
+  supplierId String
+  purchaseOrderId String
+  receiptId String
+  warehouseId String
+  status SupplierReturnStatus @default(DRAFT)
+  reason SupplierReturnReason
+  createdById String
+  approvedById String?
+  submittedAt DateTime?
+  approvedAt DateTime?
+  returnedAt DateTime?
+  completedAt DateTime?
+  notes String? @db.Text
+  shipmentReference String? @db.VarChar(191)
+  completionNotes String? @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  supplier Supplier @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Restrict)
+  receipt PurchaseReceipt @relation(fields: [receiptId], references: [id], onDelete: Restrict)
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  createdBy User @relation("ReturnCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  approvedBy User? @relation("ReturnApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+  items SupplierReturnItem[]
+  @@index([warehouseId, status, createdAt])
+  @@index([receiptId, status])
+  @@index([supplierId, createdAt])
+}
+
+model SupplierReturnItem {
+  id String @id @default(cuid())
+  supplierReturnId String
+  receiptItemId String
+  productId String
+  quantity Int
+  reason SupplierReturnReason
+  condition ReturnCondition
+  heldQuantity Int @default(0)
+  stockCondition StockCondition @default(AVAILABLE)
+  supplierReturn SupplierReturn @relation(fields: [supplierReturnId], references: [id], onDelete: Cascade)
+  receiptItem PurchaseReceiptItem @relation(fields: [receiptItemId], references: [id], onDelete: Restrict)
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  serialSelections SupplierReturnSerial[]
+  @@unique([supplierReturnId, receiptItemId])
+  @@index([receiptItemId])
+  @@index([productId])
+}
+
+model SupplierReturnSerial {
+  returnItemId String
+  serialNumberId String
+  previousStatus SerialStatus
+  returnItem SupplierReturnItem @relation(fields: [returnItemId], references: [id], onDelete: Cascade)
+  serialNumber SerialNumber @relation(fields: [serialNumberId], references: [id], onDelete: Restrict)
+  @@id([returnItemId, serialNumberId])
+  @@index([serialNumberId])
+}
+
+enum StockCondition {
+  AVAILABLE
+  QUARANTINE
+  DEFECTIVE
+  FOR_REPAIR
+}
+
+model StockConditionChange {
+  id String @id @default(cuid())
+  referenceNumber String @unique
+  productId String
+  warehouseId String
+  userId String
+  fromCondition StockCondition
+  toCondition StockCondition
+  quantity Int
+  reason String @db.VarChar(1000)
+  beforeBalances Json
+  afterBalances Json
+  stockMovementId String @unique
+  createdAt DateTime @default(now())
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  stockMovement StockMovement @relation(fields: [stockMovementId], references: [id], onDelete: Restrict)
+  serialSelections StockConditionSerial[]
+  @@index([warehouseId, createdAt])
+  @@index([productId, createdAt])
+}
+
+model StockConditionSerial {
+  conditionChangeId String
+  serialNumberId String
+  conditionChange StockConditionChange @relation(fields: [conditionChangeId], references: [id], onDelete: Restrict)
+  serialNumber SerialNumber @relation(fields: [serialNumberId], references: [id], onDelete: Restrict)
+  @@id([conditionChangeId, serialNumberId])
+  @@index([serialNumberId])
 }
 
 model Asset {
@@ -563,6 +791,11 @@ model Asset {
   warehouse Warehouse? @relation(fields: [warehouseId], references: [id])
   assignments AssetAssignment[]
   maintenanceRecords MaintenanceRecord[]
+  servicePreviousStatus String?
+  servicePreviousSerialStatus String?
+  events AssetEvent[]
+  maintenancePlans PreventiveMaintenancePlan[]
+  warrantyClaims WarrantyClaim[]
   @@index([status, warehouseId])
 }
 
@@ -582,7 +815,12 @@ model AssetAssignment {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   asset Asset @relation(fields: [assetId], references: [id])
-  assignedBy User? @relation(fields: [assignedById], references: [id])
+  assignedBy User? @relation("AssignmentIssuer", fields: [assignedById], references: [id])
+  returnedById String?
+  returnNotes String? @db.Text
+  warehouseId String?
+  returnedBy User? @relation("AssignmentReceiver", fields: [returnedById], references: [id])
+  warehouse Warehouse? @relation(fields: [warehouseId], references: [id])
   @@index([assetId, status])
 }
 
@@ -604,7 +842,96 @@ model MaintenanceRecord {
   asset Asset @relation(fields: [assetId], references: [id])
   serialNumber SerialNumber? @relation(fields: [serialNumberId], references: [id])
   createdBy User? @relation(fields: [createdById], references: [id])
+  kind String @default("CORRECTIVE")
+  planId String?
+  plannedDueAt DateTime?
+  warehouseId String?
+  inspectionResult String?
+  plan PreventiveMaintenancePlan? @relation(fields: [planId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  warehouse Warehouse? @relation(fields: [warehouseId], references: [id])
+  warrantyClaims WarrantyClaim[]
+  @@unique([planId, plannedDueAt])
   @@index([assetId, status])
+}
+
+// History starts at installation; nullable legacy snapshots are never guessed.
+model AssetEvent {
+  id String @id @default(cuid())
+  assetId String
+  warehouseId String?
+  userId String
+  type String
+  referenceId String?
+  notes String @db.Text
+  data Json
+  createdAt DateTime @default(now())
+  asset Asset @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  warehouse Warehouse? @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  @@index([assetId, createdAt])
+  @@index([warehouseId, createdAt])
+}
+
+model PreventiveMaintenancePlan {
+  id String @id @default(cuid())
+  assetId String
+  title String
+  instructions String @db.Text
+  intervalDays Int
+  nextDueAt DateTime
+  status String @default("ACTIVE")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  asset Asset @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  records MaintenanceRecord[]
+  @@index([assetId, status, nextDueAt])
+}
+
+// A claim records a supplier decision; it never performs stock/custody actions.
+model WarrantyClaim {
+  id String @id @default(cuid())
+  claimNumber String @unique
+  serialNumberId String
+  activeSerialId String? @unique
+  assetId String?
+  warehouseId String
+  supplierId String
+  receiptId String
+  warrantyStart DateTime
+  warrantyEnd DateTime
+  issue String @db.Text
+  status String @default("DRAFT")
+  providerReference String?
+  outcome String?
+  notes String? @db.Text
+  maintenanceId String?
+  supplierReturnId String?
+  submittedAt DateTime?
+  resolvedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  serialNumber SerialNumber @relation(fields: [serialNumberId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  asset Asset? @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  supplier Supplier @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  receipt PurchaseReceipt @relation(fields: [receiptId], references: [id], onDelete: Restrict)
+  maintenance MaintenanceRecord? @relation(fields: [maintenanceId], references: [id], onDelete: Restrict)
+  supplierReturn SupplierReturn? @relation(fields: [supplierReturnId], references: [id], onDelete: Restrict)
+  events WarrantyClaimEvent[]
+  @@index([warehouseId, status, createdAt])
+}
+
+model WarrantyClaimEvent {
+  id String @id @default(cuid())
+  claimId String
+  userId String
+  action String
+  notes String @db.Text
+  data Json
+  createdAt DateTime @default(now())
+  claim WarrantyClaim @relation(fields: [claimId], references: [id], onDelete: Restrict)
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  @@index([claimId, createdAt])
 }
 
 model Notification {

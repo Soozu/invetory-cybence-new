@@ -1,10 +1,14 @@
 export function can(user, permission) {
   if (!user) return false
+  if (permission?.all) return permission.all.every(key => can(user, key))
   if (Array.isArray(permission)) return permission.some(key => can(user, key))
   return user.role === 'Administrator' || user.permissions?.includes(permission)
 }
 
 export function routePermission(path) {
+  if (path.startsWith('/assets/warranty-claims')) return 'warranty_claims.VIEW'
+  if (path.startsWith('/procurement/reorder')) return { all: ['inventory.VIEW', 'purchasing.VIEW', 'purchase_requests.VIEW', 'suppliers.VIEW'] }
+  if (path.startsWith('/procurement/supplier-performance')) return { all: ['purchasing.VIEW', 'suppliers.VIEW', 'supplier_returns.VIEW'] }
   if (path === '/' || path.startsWith('/dashboard')) return 'dashboard.VIEW'
   if (path === '/products/new') return 'products.CREATE'
   if (/^\/products\/[^/]+\/edit$/.test(path)) return 'products.EDIT'
@@ -23,6 +27,9 @@ export function routePermission(path) {
   if (path === '/procurement/rfqs/new') return 'rfqs.CREATE'
   if (/^\/procurement\/rfqs\/[^/]+\/edit$/.test(path) || /\/quotations\/(new|[^/]+\/edit)$/.test(path)) return 'rfqs.EDIT'
   if (path.startsWith('/procurement/rfqs')) return 'rfqs.VIEW'
+  if (path === '/procurement/supplier-returns/new') return 'supplier_returns.CREATE'
+  if (/^\/procurement\/supplier-returns\/[^/]+\/edit$/.test(path)) return 'supplier_returns.EDIT'
+  if (path.startsWith('/procurement/supplier-returns')) return 'supplier_returns.VIEW'
   if (path.startsWith('/procurement/suppliers')) return 'suppliers.VIEW'
   if (path === '/procurement/purchase-orders/new') return 'purchasing.CREATE'
   if (path.startsWith('/procurement')) return 'purchasing.VIEW'

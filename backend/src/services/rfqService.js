@@ -23,6 +23,9 @@ export async function rfqRecord(tx, id, user) {
 export function currentVersion(row, input) {
   if (!input.expectedUpdatedAt || new Date(input.expectedUpdatedAt).getTime() !== row.updatedAt.getTime()) throw new HttpError(409, 'Document changed since you opened it. Reload before continuing.')
 }
+// Millisecond timestamps are optimistic version tokens. Always advance them,
+// including fast writes and clocks adjusted backwards, so old forms stay stale.
+export const nextDocumentVersion = row => new Date(Math.max(Date.now(), row.updatedAt.getTime() + 1))
 export const getRFQ = (id, user) => rfqRecord(prisma, id, user)
 export async function listRFQs(query, user) {
   const where = warehouseWhere(user, query.warehouse)
@@ -67,7 +70,7 @@ export async function updateRFQ(id, input, req) {
     if ((input.purchaseRequestId || null) !== row.purchaseRequestId) throw new HttpError(400, 'The source request cannot be changed.')
     const items = await validatedRFQ(tx, input, req.user, id)
     await tx.rFQItem.deleteMany({ where: { rfqId: id } }); await tx.rFQSupplier.deleteMany({ where: { rfqId: id } })
-    const updated = await tx.rFQ.update({ where: { id }, data: { warehouseId: input.warehouseId, closingDate: input.closingDate, notes: input.notes,
+    const updated = await tx.rFQ.update({ where: { id }, data: { warehouseId: input.warehouseId, closingDate: input.closingDate, notes: input.notes, updatedAt: nextDocumentVersion(row),
       suppliers: { create: input.supplierIds.map(supplierId => ({ supplierId })) }, items: { create: items } }, include })
     await audit(tx, req, 'UPDATED', 'RFQs', 'RFQ', id, `Updated ${row.rfqNumber}.`, { warehouseId: row.warehouseId, relatedWarehouseId: input.warehouseId })
     return updated
@@ -85,8 +88,10 @@ export async function transitionRFQ(id, action, input, req) {
       if (await tx.supplier.count({ where: { id: { in: row.suppliers.map(item => item.supplierId) }, status: 'ACTIVE' } }) !== row.suppliers.length) throw new HttpError(400, 'An invited supplier is inactive.')
       await tx.rFQSupplier.updateMany({ where: { rfqId: id }, data: { invitedAt: new Date() } })
     }
-    if (action === 'cancel') await tx.supplierQuotation.updateMany({ where: { rfqId: id, status: { not: 'CONVERTED' } }, data: { status: 'CANCELLED' } })
-    const changed = await tx.rFQ.updateMany({ where: { id, status: row.status }, data: { status: step.to,
+    if (action === 'cancel') for (const quote of row.quotations) {
+      await tx.supplierQuotation.update({ where: { id: quote.id }, data: { status: 'CANCELLED', updatedAt: nextDocumentVersion(quote) } })
+    }
+    const changed = await tx.rFQ.updateMany({ where: { id, status: row.status }, data: { status: step.to, updatedAt: nextDocumentVersion(row),
       ...(action === 'issue' ? { issuedAt: new Date() } : {}), ...(action === 'close' ? { closedAt: new Date() } : {}) } })
     if (changed.count !== 1) throw new HttpError(409, 'RFQ changed concurrently.')
     await audit(tx, req, action.toUpperCase(), 'RFQs', 'RFQ', id, `${action} ${row.rfqNumber}.`, { warehouseId: row.warehouseId })
@@ -107,8 +112,8 @@ export async function awardRFQ(id, input, req) {
     if (quote.validUntil && quote.validUntil <= new Date()) throw new HttpError(409, 'The quotation has expired. Obtain a current quotation before awarding.')
     if (quote.items.length !== row.items.length || row.items.some(item => !quote.items.some(line => line.rfqItemId === item.id && line.quantity === item.quantity))) throw new HttpError(409, 'Quotation lines do not match the requested items.')
     if (!input.notes?.trim()) throw new HttpError(400, 'Explain the manual selection.')
-    await tx.supplierQuotation.update({ where: { id: quote.id }, data: { status: 'ACCEPTED' } })
-    const changed = await tx.rFQ.updateMany({ where: { id, status: 'CLOSED', selectedQuotationId: null }, data: { status: 'AWARDED', selectedQuotationId: quote.id, selectedById: req.user.id, selectedAt: new Date(), selectionNotes: input.notes } })
+    await tx.supplierQuotation.update({ where: { id: quote.id }, data: { status: 'ACCEPTED', updatedAt: nextDocumentVersion(quote) } })
+    const changed = await tx.rFQ.updateMany({ where: { id, status: 'CLOSED', selectedQuotationId: null }, data: { status: 'AWARDED', selectedQuotationId: quote.id, selectedById: req.user.id, selectedAt: new Date(), selectionNotes: input.notes, updatedAt: nextDocumentVersion(row) } })
     if (changed.count !== 1) throw new HttpError(409, 'RFQ changed concurrently.')
     await audit(tx, req, 'AWARDED', 'RFQs', 'RFQ', id, `Manually selected ${quote.quotationNumber} for ${row.rfqNumber}. ${input.notes}`, { warehouseId: row.warehouseId })
     return rfqRecord(tx, id, req.user)
