@@ -1,6 +1,8 @@
 # TechStock Inventory Frontend
 
-Current expansion status and verification: [Phase 16 release checks](docs/release-verification.md), [unfinished work handoff](docs/unfinished-work-context.md). Deployment is deferred at the user's request; Phase 13–15 browser acceptance and dependency maintenance remain pending.
+For application workflows and daily operation, see the [complete system user guide](docs/system-user-guide.md).
+
+Current expansion status and verification: [Phase 16 release checks](docs/release-verification.md), [unfinished work handoff](docs/unfinished-work-context.md). The frontend is hosted on Vercel and the backend on Railway. Production acceptance, Phase 13–15 browser acceptance and dependency maintenance remain pending; older phase notes describe historical local verification.
 
 TechStock is an IT inventory, procurement, and asset management system. The existing responsive React interface now uses an Express API, Prisma, and MySQL. Product, stock, order, asset, user, and audit records are stored in MySQL. Browser storage is used only for the visual theme.
 
@@ -50,7 +52,7 @@ The frontend uses `http://localhost:5000/api` by default. To change it, copy `.e
 
 The frontend address is `https://inventory.cybenceitsolutions.com`. The tracked `.env.production` sets `VITE_API_URL=https://techapi.cybenceitsolutions.com/api` for `npm run build`. Local `npm run dev` retains the localhost API setting. Hosting environment variables take priority over Vite env files; remove or update any old `VITE_API_URL` override when building. Rebuild after changing an API URL. See [Vite environment modes](https://vite.dev/guide/env-and-mode).
 
-The backend production configuration allows `https://inventory.cybenceitsolutions.com` in `FRONTEND_URL` and uses secure cookies. See the backend `.env.production.example` and `npm run start:production`. These changes prepare configuration; deployment remains deferred.
+The backend production configuration allows `https://inventory.cybenceitsolutions.com` in `FRONTEND_URL` and uses secure cookies. See the backend `.env.production.example`. Railway supplies private variables at runtime; follow the backend's [Railway backup and container setup](https://github.com/Soozu/inventory-cybence-backend/blob/main/docs/railway-backups.md). `npm run start:production` is for hosts with a private `.env.production` file, which is excluded from the deployment image.
 
 ### Vercel page refresh and direct links
 
@@ -94,4 +96,4 @@ Frontend tests cover the centralized API client and empty dashboard responses. B
 
 Use MySQL backup tools for the database and include `uploads/products` from the backend repository in file backups. For example, `mysqldump -u YOUR_USER -p techstock_inventory > techstock.sql`. The Settings screen shows the same guidance. A JSON export of visible UI records is not a database backup.
 
-Deployment remains deferred. When requested, configure the backend repository with distinct production JWT secrets, an HTTPS frontend URL in `FRONTEND_URL`, `NODE_ENV=production`, and a secure MySQL connection. Run `npx prisma migrate deploy`, keep uploads on persistent storage, and change the development admin credentials. The product upload directory is behind an Express static URL and can later be replaced by object storage.
+Configure the backend with distinct production JWT secrets, an HTTPS frontend URL in `FRONTEND_URL`, `NODE_ENV=production`, and a secure MySQL connection. Review pending migrations before applying `npx prisma migrate deploy`; do not reset the existing database. Keep attachments, backup output and public product images on appropriate persistent storage. Change any temporary administrator credentials through the account password workflow. The product upload directory is behind an Express static URL and can later be replaced by object storage.
