@@ -1,5 +1,7 @@
 # Original roadmap — phase status
 
+**Repository split (2026-10-02):** The API now lives in the independent `inventory-cybence-backend` repository. Frontend source remains in `invetory-cybence-new`. Commands and paths below containing `backend/` describe the previous layout; run backend commands from the new backend root. Frontend client tests now live in frontend `tests/`. See [current repository setup](repository-separation.md).
+
 Reviewed: 2026-10-01 (Asia/Manila), against the original advanced-features request, current source/models/routes and recorded verification. This review does not rerun the tests or provide new browser acceptance.
 
 **Use these original phase numbers for future requests.** Previous progress messages used grouped checkpoints: checkpoint 11 combined original phases 11–12; checkpoint 12 combined 13–15; checkpoint 13 combined 16–17; checkpoint 14 combined 18–22; checkpoint 15 combined 23–29; checkpoint 16 covered expanded tests in original phase 30. The old checkpoint labels in feature documents and evidence filenames remain historical identifiers.

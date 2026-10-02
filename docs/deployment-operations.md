@@ -1,5 +1,7 @@
 # Deployment and recovery operations
 
+**Repository split (2026-10-02):** The API now lives in the independent `inventory-cybence-backend` repository. Frontend source remains in `invetory-cybence-new`. Commands and paths below containing `backend/` describe the previous layout; run backend commands from the new backend root. Frontend client tests now live in frontend `tests/`. See [current repository setup](repository-separation.md).
+
 Phase 15 prepares operational controls. Phase 16 automated release coverage passes; browser acceptance remains pending. Deployment work is deferred at the user's explicit request on 2026-10-01. This runbook is retained for a future requested deployment; no deployment or production restore is performed by development verification.
 
 ## Runtime and configuration
@@ -18,7 +20,7 @@ The local storage provider is `ATTACHMENT_STORAGE_PROVIDER=LOCAL`. Unknown provi
 
 1. Preserve a verified database + file backup and the existing application version.
 2. Stop writes for migration/cutover. Inspect pending SQL and current migration ledger. Never use `migrate reset` or replay the full chain against the persistent development UI schema without a ledger.
-3. From `backend`, run `npm ci`, `npm run prisma:generate`, and `npx prisma migrate deploy`. On a new database, configure SEED_ADMIN_EMAIL and SEED_ADMIN_PASSWORD before running `npm run prisma:seed` to bootstrap one administrator and the system role/permission definitions. The seed creates no demo business data and does not reset an existing administrator password.
+3. From the `inventory-cybence-backend` repository root, run `npm ci`, `npm run prisma:generate`, and `npx prisma migrate deploy`. On a new database, configure SEED_ADMIN_EMAIL and SEED_ADMIN_PASSWORD before running `npm run prisma:seed` to bootstrap one administrator and the system role/permission definitions. The seed creates no demo business data and does not reset an existing administrator password.
 4. Configure production environment, durable directories and a service manager. Run `npm run deployment:check` against the selected target to verify configuration, connectivity and migration completion. It performs no synthetic business mutations.
 5. Build/serve the frontend and start `npm start` for the backend behind TLS. Confirm public `/api/health`, authenticated administrator system health and a scoped real read. Verify session cookie behavior through the deployed origin.
 6. Start workers on the intended API instances (`JOBS_ENABLED=true`); database leases coordinate overlapping runs. Set false on instances where workers are unwanted. Monitor structured request/job logs, disk capacity and backup status. Run external uptime/alerting and copy backups off the host.
@@ -40,7 +42,7 @@ These are same-host backups. File integrity is not proof of restore readiness or
 1. Choose a COMPLETE backup and verify its manifest/files.
 2. Create a plan with a **new** `techstock_restore_...` schema. Existing database targets, including the original schema, are rejected.
 3. Type the exact `RESTORE <backup-id> INTO <target-schema>` phrase from the plan. Plans belong to the requesting administrator and expire 30 minutes after creation.
-4. Execute the returned `npm run backup:restore -- --plan <plan-id>` command from `backend` on the host. HTTP only records confirmation; it never runs the SQL import. The command claims the plan once and imports into the new schema and a new private `restored-<plan-id>` directory.
+4. Execute the returned `npm run backup:restore -- --plan <plan-id>` command from the backend repository root on the host. HTTP only records confirmation; it never runs the SQL import. The command claims the plan once and imports into the new schema and a new private `restored-<plan-id>` directory.
 5. Verify relational counts, migrations, stock, references and copied file hashes, then perform the final release acceptance in the restored environment. Imported sessions/refresh cookies are invalidated and leases cleared. Review scheduled jobs, database events/routines, and restored configuration before starting the recovered API.
 6. Explicitly set `DATABASE_URL` and upload directory mounts to the verified restored targets at maintenance cutover. Retain the previous target for rollback.
 

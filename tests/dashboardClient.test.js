@@ -9,7 +9,7 @@ describe('dashboard client with an empty database',()=>{
     vi.stubEnv('VITE_API_URL','https://api.test/api')
     fetchMock=vi.fn(url=>Promise.resolve(success(url.includes('/summary')?totals:[])))
     vi.stubGlobal('fetch',fetchMock)
-    ;({getDashboardOverview}=await import('../../src/services/dashboardService.js'))
+    ;({getDashboardOverview}=await import('../src/services/dashboardService.js'))
   })
   afterEach(()=>{vi.unstubAllGlobals();vi.unstubAllEnvs()})
   it('accepts real zero totals and empty activity/stock lists',async()=>{

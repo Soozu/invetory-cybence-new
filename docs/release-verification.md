@@ -1,5 +1,7 @@
 # Phase 16 — expanded release verification
 
+**Repository split (2026-10-02):** The API now lives in the independent `inventory-cybence-backend` repository. Frontend source remains in `invetory-cybence-new`. Commands and paths below containing `backend/` describe the previous layout; run backend commands from the new backend root. Frontend client tests now live in frontend `tests/`. See [current repository setup](repository-separation.md).
+
 Updated: 2026-10-01 (Asia/Manila).
 
 **Automated development acceptance passed.** Deployment work is deferred at the user's request. Browser acceptance for Phases 13–15 remains pending because the saved local-preview permission has not been confirmed cleared. The full expansion remains unfinished until that backlog and dependency maintenance are resolved.

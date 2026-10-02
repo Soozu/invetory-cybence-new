@@ -11,7 +11,7 @@ describe('frontend API transport regressions', () => {
     vi.stubEnv('VITE_API_URL', 'https://api.test/api/')
     fetchMock = vi.fn(); events = new EventTarget()
     vi.stubGlobal('fetch', fetchMock); vi.stubGlobal('window', events)
-    api = await import('../../src/lib/api.js')
+    api = await import('../src/lib/api.js')
   })
   afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.unstubAllEnvs() })
 

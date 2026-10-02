@@ -3,13 +3,5 @@ dist/
 .vite/
 *.local
 .env
-backend/.env
-backend/uploads/*
-!backend/uploads/.gitkeep
-backend/logs/*
-backend/.test-runtime/
-backend/.private-storage/
-backend/.warehouse-test-state.json
-backend/.*-ui.mjs
-backend/prisma/.*-before.prisma
-!backend/logs/.gitkeep
+.env.*
+!.env.example
