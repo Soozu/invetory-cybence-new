@@ -52,6 +52,12 @@ The frontend address is `https://inventory.cybenceitsolutions.com`. The tracked 
 
 The backend production configuration allows `https://inventory.cybenceitsolutions.com` in `FRONTEND_URL` and uses secure cookies. See the backend `.env.production.example` and `npm run start:production`. These changes prepare configuration; deployment remains deferred.
 
+### Vercel page refresh and direct links
+
+The root `vercel.json` rewrites frontend routes to `/index.html`, allowing React's `BrowserRouter` to render pages such as `/system/backups` or `/assets/warranty-claims` when opened directly or refreshed. This follows [Vercel's Vite SPA configuration](https://vercel.com/docs/frameworks/frontend/vite#using-vite-to-make-spas).
+
+Deploy a revision containing this file to the Vercel project serving `inventory.cybenceitsolutions.com`. Use the frontend repository as the project root, the Vite framework preset, build command `npm run build`, and output directory `dist`. Redeploy after adding the configuration; an older deployment keeps returning a hosting 404 on nested routes. Existing static files are served normally, and API requests continue using the separate Railway API origin.
+
 ## Common workflows
 
 1. Add categories, brands, suppliers, warehouses, and products.
