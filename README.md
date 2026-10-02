@@ -46,6 +46,12 @@ npm run dev
 
 The frontend uses `http://localhost:5000/api` by default. To change it, copy `.env.example` to `.env` and set `VITE_API_URL`. This is a public build setting; never put database credentials or JWT secrets in a `VITE_` variable. Set the Vite origin in the backend's `FRONTEND_URL`, open the URL printed by Vite and sign in with your configured account.
 
+### Production domains
+
+The frontend address is `https://inventory.cybenceitsolutions.com`. The tracked `.env.production` sets `VITE_API_URL=https://techapi.cybenceitsolutions.com/api` for `npm run build`. Local `npm run dev` retains the localhost API setting. Hosting environment variables take priority over Vite env files; remove or update any old `VITE_API_URL` override when building. Rebuild after changing an API URL. See [Vite environment modes](https://vite.dev/guide/env-and-mode).
+
+The backend production configuration allows `https://inventory.cybenceitsolutions.com` in `FRONTEND_URL` and uses secure cookies. See the backend `.env.production.example` and `npm run start:production`. These changes prepare configuration; deployment remains deferred.
+
 ## Common workflows
 
 1. Add categories, brands, suppliers, warehouses, and products.

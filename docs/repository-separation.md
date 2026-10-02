@@ -41,3 +41,11 @@ The backend's existing `.env`, uploads, private attachments/backups, logs, insta
 Existing feature/acceptance documentation is retained in both repositories as historical system context. Paths prefixed with `backend/` in those records now refer to the backend repository root; the two frontend test files are the exception noted above. The backend README and this document are the current setup instructions.
 
 The browser public IP fix is included in both applications. Public IP remains optional browser-reported session metadata; the server-observed IP remains separate. Browser acceptance, dependency maintenance, missing imported serial reconciliation and production deployment remain pending. Deployment is still deferred.
+
+## Production domain configuration (2026-10-02)
+
+Frontend: `https://inventory.cybenceitsolutions.com`. API: `https://techapi.cybenceitsolutions.com/api`. Frontend `.env.production` is tracked public configuration containing only `VITE_API_URL`; `npm run build` loads it, while development retains localhost.
+
+Backend `.env.production.example` is the public template. Actual `.env.production` remains private and ignored, with `NODE_ENV=production`, `FRONTEND_URL=https://inventory.cybenceitsolutions.com` and `COOKIE_SECURE=true`. `npm run start:production` explicitly loads this private file. Existing database and JWT settings are retained locally. A managed host can instead set these production variables and use `npm start`. Hosting environment variables take priority, so existing localhost overrides must be updated.
+
+Proxy hop configuration still depends on the actual hosting topology. These environment changes do not perform deployment or host-level acceptance.

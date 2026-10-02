@@ -5,3 +5,5 @@ dist/
 .env
 .env.*
 !.env.example
+# Public production API URL only; never add secrets to VITE_ variables.
+!.env.production
