@@ -27,6 +27,16 @@ Five failed attempts create a 15-minute account lockout. Failed state commits be
 
 API: `GET /api/sessions?page=1`, `POST /:id/revoke`, `POST /others/revoke`; administrator `GET /users/:userId`, `POST /users/:userId/revoke` with exact `REVOKE ALL SESSIONS`, and `POST /users/:userId/unlock`. Self lists are owner-only and paged at 20. All session responses use private/no-store.
 
+### Public and connection IP addresses (2026-10-02)
+
+The sessions page distinguishes **Public IP (device reported)** from **Connection IP (server observed)**. A localhost API sees `::1` or `127.0.0.1`; that address cannot reveal the browser's public internet address. The browser therefore calls [ipify's documented IPv4/IPv6 endpoint](https://www.ipify.org/) directly over HTTPS, omitting cookies, authorization and the referrer. This contacts an external IP lookup provider. VPNs, proxies and changes of network can change the result.
+
+Login and refresh responses now include `sessionId`. Sign-in and initial session restore start an optional background lookup without delaying authentication. Opening Sessions updates the current device; Refresh retries detection. Lookup has a five-second timeout, shares simultaneous requests and reuses successful session reports for five minutes unless Refresh is requested. Failures leave any previously stored report intact and show a retry message on Sessions.
+
+`PUT /api/sessions/current/public-ip` accepts the strict body `{ sessionId, ipAddress }`. The authenticated session must match `sessionId`; another account, session or revoked session cannot be updated. Public IPv4/IPv6 input is validated and the server records `reportedPublicIpAt`. `reportedPublicIp` is optional, unverified client metadata and never controls authorization, audit IP, proxy trust or rate limiting. The original `ipAddress` remains the server-observed sign-in address. Responses include both fields and the report timestamp, without credential hashes.
+
+Migration `20261012_session_public_ip` adds two nullable columns, preserving existing records. Existing sessions have no historical public IP to recover; each device must reconnect to report it. With a hosted API, configure `TRUST_PROXY_HOPS` only for the actual trusted proxy topology to obtain the server-observed client address. Browser reporting does not replace that configuration.
+
 ## Backup, restore, storage and retention
 
 See [deployment-operations.md](deployment-operations.md) for the full operational runbook, hosting requirements and configuration.

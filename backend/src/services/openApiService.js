@@ -5,6 +5,7 @@ import * as procurement from '../validators/procurement.js'
 import * as transfers from '../validators/transfers.js'
 import * as assets from '../validators/assets.js'
 import * as reports from '../validators/reporting.js'
+import { sessionPublicIpSchema } from '../validators/session.js'
 import { reportCatalog } from './reportCatalog.js'
 import { retentionSchema } from './retentionService.js'
 
@@ -30,7 +31,7 @@ export function describeSchema(schema){
 }
 export function openApi(){
   const paths={},schemas={Success:{type:'object',required:['success','data'],properties:{success:{const:true},message:{type:'string'},data:{},pagination:{$ref:'#/components/schemas/Pagination'}}},Error:{type:'object',required:['success','message','errors'],properties:{success:{const:false},message:{type:'string'},errors:{type:'array',items:{type:'object',properties:{field:{type:'string'},message:{type:'string'}}}}}},Pagination:{type:'object',properties:{page:{type:'integer',minimum:1},limit:{type:'integer',minimum:1,maximum:100},total:{type:'integer'},totalPages:{type:'integer'}}}}
-  const bodySchemas={...auth,...catalog,...inventory,...procurement,...transfers,...assets,...reports,retentionSchema}
+  const bodySchemas={...auth,...catalog,...inventory,...procurement,...transfers,...assets,...reports,retentionSchema,sessionPublicIpSchema}
   for(const [name,value]of Object.entries(bodySchemas))if(value?._def)schemas[name]=describeSchema(value)
   const pagination=['page','limit','search','sortBy','sortOrder'].map(name=>({name,in:'query',required:false,schema:name==='page'||name==='limit'?{type:'integer',minimum:1,...(name==='limit'?{maximum:100}:{})}:{type:'string'},description:name==='sortBy'?'Allowed sort fields depend on the resource.':name==='sortOrder'?'asc or desc.':undefined}))
   function add(path,method,tag,summary,{permission,body,paged=false,publicRoute=false,admin=false,description,parameters=[],created=false}={}){
@@ -85,6 +86,7 @@ export function openApi(){
   }
   add('/reports/saved','get','Reports','Own saved configurations',{permission:'reports.VIEW'});add('/reports/saved','post','Reports','Save configuration',{body:'savedReportSchema',permission:'reports.VIEW',created:true});add('/reports/saved/{id}','put','Reports','Update owned configuration with revision',{body:'savedReportSchema',permission:'reports.VIEW'})
   add('/sessions','get','Sessions','Own active session metadata',{paged:true});add('/sessions/{id}/revoke','post','Sessions','Revoke owned session immediately',{body:{type:'object',additionalProperties:false}});add('/sessions/others/revoke','post','Sessions','Keep current session; revoke others',{body:{type:'object',additionalProperties:false}})
+  add('/sessions/current/public-ip','put','Sessions','Report browser public IP for the current session',{body:'sessionPublicIpSchema',description:'Optional, unverified browser-reported public IPv4/IPv6 metadata with a server timestamp. sessionId must match the authenticated session. Does not change the server-observed ipAddress, audit IP, proxy trust, authorization or rate limiting.'})
   add('/sessions/users/{userId}','get','Sessions','Administrator account sessions',{admin:true,paged:true});add('/sessions/users/{userId}/revoke','post','Sessions','Administrator revoke all',{admin:true,body:{type:'object',required:['confirmation'],properties:{confirmation:{const:'REVOKE ALL SESSIONS'}},additionalProperties:false}});add('/sessions/users/{userId}/unlock','post','Sessions','Clear temporary lockout',{admin:true,body:{type:'object',additionalProperties:false}})
   for(const resource of ['health','backups','restores','retention'])add('/system/'+resource,'get','Operations','Administrator '+resource,{admin:true,paged:resource==='backups'})
   add('/system/backups','post','Operations','Queue database and upload backup',{admin:true,body:{type:'object',required:['confirmation'],properties:{confirmation:{const:'CREATE BACKUP'}},additionalProperties:false}}).responses['202']={description:'Backup queued; poll registry for separate database/upload completion.'}

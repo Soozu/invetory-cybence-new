@@ -222,6 +222,8 @@ model Session {
   refreshTokenHash String? @unique @db.Char(64)
   authVersion Int
   ipAddress String? @db.VarChar(64)
+  reportedPublicIp String? @db.VarChar(45)
+  reportedPublicIpAt DateTime?
   userAgent String? @db.VarChar(512)
   createdAt DateTime @default(now())
   lastUsedAt DateTime @default(now())

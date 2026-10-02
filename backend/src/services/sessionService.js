@@ -3,7 +3,15 @@ import { inventoryTransaction } from './inventoryService.js'
 import { HttpError } from '../utils/http.js'
 import { audit } from '../utils/audit.js'
 export function requireAdmin(user){if(user?.role!=='Administrator')throw new HttpError(403,'Administrator access is required.')}
-const select={id:true,userId:true,ipAddress:true,userAgent:true,createdAt:true,lastUsedAt:true,expiresAt:true,revokedAt:true}
+const select={id:true,userId:true,ipAddress:true,reportedPublicIp:true,reportedPublicIpAt:true,userAgent:true,createdAt:true,lastUsedAt:true,expiresAt:true,revokedAt:true}
+export async function reportPublicIp({sessionId,ipAddress},req){
+  // Bind a delayed browser lookup to the session that started it, even after account switches.
+  if(sessionId!==req.sessionId)throw new HttpError(409,'The active session changed. Refresh and try again.')
+  const now=new Date(),data={reportedPublicIp:ipAddress,reportedPublicIpAt:now}
+  const updated=await prisma.session.updateMany({where:{id:req.sessionId,userId:req.user.id,revokedAt:null,expiresAt:{gt:now}},data})
+  if(updated.count!==1)throw new HttpError(401,'Session expired. Please sign in again.')
+  return data
+}
 export async function sessions(userId,req,page=1){
   if(userId!==req.user.id)requireAdmin(req.user)
   const where={userId,revokedAt:null,expiresAt:{gt:new Date()}}

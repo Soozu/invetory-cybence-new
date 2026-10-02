@@ -17,11 +17,11 @@ const metadata = req => ({ ipAddress: req?.ip?.slice(0,64) || null, userAgent: r
 function tokens(user, sid, remember) {
   const accessToken = jwt.sign({ sub:user.id, sid, ver:user.authVersion, type:'access' }, env.accessSecret, { expiresIn:env.accessExpires, algorithm:'HS256' })
   const refreshToken = jwt.sign({ sub:user.id, sid, ver:user.authVersion, type:'refresh', jti:crypto.randomUUID(), remember }, env.refreshSecret, { expiresIn:env.refreshExpires, algorithm:'HS256' })
-  return { accessToken, refreshToken, expiry:new Date(jwt.decode(refreshToken).exp*1000) }
+  return { accessToken, refreshToken, sessionId:sid, expiry:new Date(jwt.decode(refreshToken).exp*1000) }
 }
 function respond(user, pair, res, remember) {
   res.cookie('techstock_refresh', pair.refreshToken, { ...refreshCookie, ...(remember ? {expires:pair.expiry} : {}) })
-  return { accessToken:pair.accessToken, user:publicUser(user) }
+  return { accessToken:pair.accessToken, sessionId:pair.sessionId, user:publicUser(user) }
 }
 async function createSession(tx, user, remember, req) {
   const sid=crypto.randomUUID(), pair=tokens(user,sid,remember)
